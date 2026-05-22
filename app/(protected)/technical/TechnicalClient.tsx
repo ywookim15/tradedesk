@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import {
   createChart,
   CandlestickSeries,
@@ -238,6 +239,20 @@ export default function TechnicalClient() {
   const candleSeriesRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const indSeriesRef    = useRef<Map<string, any>>(new Map())
+
+  const searchParams = useSearchParams()
+
+  // Load ticker from URL param on mount (e.g. from watchlist click)
+  useEffect(() => {
+    const sym = searchParams.get('ticker')?.toUpperCase()
+    if (sym) {
+      setSearchInput(sym)
+      setTicker(sym)
+      setActiveAnalysis(null); setAiResponse(null); setAnalysisData(null)
+      fetchChart(sym, period); fetchInfo(sym)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── Data fetching ──────────────────────────────────────────────────────────
 
