@@ -36,6 +36,11 @@ type AnalysisKey =
   | 'macd' | 'rsi' | 'zscore' | 'meanrev'
   | 'momentum' | 'rsvsspx' | 'sharpe' | 'montecarlo' | 'volprofile'
 
+type AIIndicatorKey =
+  | 'rsi' | 'macd' | 'bb' | 'sma20' | 'sma50' | 'sma200'
+  | 'ema12' | 'ema26' | 'vwap' | 'volume' | 'sr' | 'zscore'
+  | 'meanrev' | 'linreg'
+
 type StockInfo = { name: string; price: number; change: number; changePercent: number }
 
 // ── Math utilities ────────────────────────────────────────────────────────────
@@ -205,6 +210,23 @@ const IND_COLORS: Record<string, string> = {
   vwap: '#F97316', linreg: '#EC4899',
 }
 
+const AI_INDICATORS: { key: AIIndicatorKey; label: string; chartKey?: IndicatorKey; color: string }[] = [
+  { key: 'rsi',     label: 'RSI',         chartKey: undefined,  color: '#F59E0B' },
+  { key: 'macd',    label: 'MACD',        chartKey: undefined,  color: '#8B5CF6' },
+  { key: 'bb',      label: 'Bollinger',   chartKey: 'bb',       color: '#4FA3FF' },
+  { key: 'sma20',   label: 'SMA 20',      chartKey: 'sma20',    color: '#4FA3FF' },
+  { key: 'sma50',   label: 'SMA 50',      chartKey: 'sma50',    color: '#F59E0B' },
+  { key: 'sma200',  label: 'SMA 200',     chartKey: 'sma200',   color: '#FF4D4D' },
+  { key: 'ema12',   label: 'EMA 12',      chartKey: 'ema12',    color: '#00C896' },
+  { key: 'ema26',   label: 'EMA 26',      chartKey: 'ema26',    color: '#8B5CF6' },
+  { key: 'vwap',    label: 'VWAP',        chartKey: 'vwap',     color: '#F97316' },
+  { key: 'volume',  label: 'Volume',      chartKey: 'volume',   color: '#2F80ED' },
+  { key: 'sr',      label: 'S/R Levels',  chartKey: 'sr',       color: '#EC4899' },
+  { key: 'zscore',  label: 'Z-Score',     chartKey: undefined,  color: '#A78BFA' },
+  { key: 'meanrev', label: 'Mean Rev.',   chartKey: undefined,  color: '#00C896' },
+  { key: 'linreg',  label: 'Lin. Reg.',   chartKey: 'linreg',   color: '#EC4899' },
+]
+
 const ANALYSIS_BTNS: { key: AnalysisKey; label: string }[] = [
   { key: 'macd',       label: 'MACD'             },
   { key: 'rsi',        label: 'RSI'              },
@@ -230,6 +252,10 @@ export default function TechnicalClient() {
   const [activeAnalysis,   setActiveAnalysis]   = useState<AnalysisKey | null>(null)
   const [analysisData,     setAnalysisData]     = useState<unknown>(null)
   const [aiResponse,       setAiResponse]       = useState<string | null>(null)
+  const [aiAnalyzed,       setAiAnalyzed]       = useState<AIIndicatorKey[]>([])
+  const [aiIndicators,     setAiIndicators]     = useState<Set<AIIndicatorKey>>(
+    new Set(['rsi', 'macd', 'sma20', 'sma50'] as AIIndicatorKey[])
+  )
   const [loading,          setLoading]          = useState(false)
   const [analysisLoading,  setAnalysisLoading]  = useState(false)
   const [aiLoading,        setAiLoading]        = useState(false)
@@ -477,6 +503,22 @@ export default function TechnicalClient() {
     })
   }, [])
 
+  const toggleAIIndicator = useCallback((key: AIIndicatorKey) => {
+    setAiIndicators(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+        const ind = AI_INDICATORS.find(i => i.key === key)
+        if (ind?.chartKey) {
+          setActiveIndicators(prev2 => new Set([...prev2, ind.chartKey!]))
+        }
+      }
+      return next
+    })
+  }, [])
+
   // ── Run analysis ───────────────────────────────────────────────────────────
 
   const runAnalysis = useCallback(async (type: AnalysisKey, overrideParams?: typeof params) => {
@@ -569,41 +611,170 @@ export default function TechnicalClient() {
   // ── AI Analysis ────────────────────────────────────────────────────────────
 
   const runAI = useCallback(async () => {
-    if (!chartData.length || !ticker) return
-    setAiLoading(true); setAiResponse(null)
+    if (!chartData.length || !ticker || aiIndicators.size === 0) return
+    setAiLoading(true); setAiResponse(null); setAiAnalyzed([])
 
     const closes = chartData.map((d) => d.close)
-    const last   = closes[closes.length - 1]
-    const rsiV   = calcRSI(closes)
-    const rsi    = rsiV[rsiV.length - 1]?.toFixed(1) ?? 'N/A'
-    const s20    = (sma(closes, 20)[closes.length - 1] ?? 0).toFixed(2)
-    const s50    = (sma(closes, 50)[closes.length - 1] ?? 0).toFixed(2)
-    const zs     = (calcZScore(closes)[closes.length - 1] ?? 0).toFixed(2)
-    const { macdLine, signalLine } = calcMACD(closes)
-    const macdV  = (macdLine[closes.length - 1] ?? 0).toFixed(3)
-    const sigV   = (signalLine[closes.length - 1] ?? 0).toFixed(3)
-    const sharpe = calcSharpe(closes)?.toFixed(2) ?? 'N/A'
+    const n = closes.length
+    const last = closes[n - 1]
+    const parts: string[] = [`${ticker} (${period} chart) — Current price: $${last.toFixed(2)}`]
+    const analyzed: AIIndicatorKey[] = []
 
-    const prompt =
-      `Analyze ${ticker} (${period} chart). Price: $${last.toFixed(2)}. ` +
-      `RSI(14): ${rsi}. SMA20: $${s20}, SMA50: $${s50}. ` +
-      `MACD: ${macdV}, Signal: ${sigV}. Z-Score: ${zs}. Sharpe: ${sharpe}. ` +
-      `Active overlays: ${Array.from(activeIndicators).join(', ')}. ` +
-      `Give a concise educational summary of what these technicals indicate.`
+    if (aiIndicators.has('rsi')) {
+      const vals = calcRSI(closes, params.rsiPeriod)
+      const v = vals[n - 1]
+      if (v != null) {
+        const zone = v > 70 ? 'overbought' : v < 30 ? 'oversold' : 'neutral'
+        parts.push(`RSI(${params.rsiPeriod}): ${v.toFixed(1)} — ${zone}`)
+        analyzed.push('rsi')
+      }
+    }
+
+    if (aiIndicators.has('macd')) {
+      const { macdLine, signalLine, histogram } = calcMACD(closes, params.macdFast, params.macdSlow, params.macdSignal)
+      const m = macdLine[n - 1], s = signalLine[n - 1], h = histogram[n - 1]
+      if (m != null && s != null && h != null) {
+        const cross =
+          (h > 0 && (histogram[n - 2] ?? 0) <= 0) ? 'bullish crossover just occurred' :
+          (h < 0 && (histogram[n - 2] ?? 0) >= 0) ? 'bearish crossover just occurred' :
+          h > 0 ? 'MACD above signal (bullish)' : 'MACD below signal (bearish)'
+        parts.push(`MACD(${params.macdFast},${params.macdSlow},${params.macdSignal}): MACD ${m.toFixed(3)}, Signal ${s.toFixed(3)}, Histogram ${h.toFixed(3)} — ${cross}`)
+        analyzed.push('macd')
+      }
+    }
+
+    if (aiIndicators.has('bb')) {
+      const bb = bollingerBands(closes)
+      const b = bb[n - 1]
+      if (b.upper != null && b.lower != null && b.middle != null) {
+        const bRange = b.upper - b.lower
+        const pct = bRange > 0 ? ((last - b.lower) / bRange * 100).toFixed(0) : '50'
+        const pos = Number(pct) > 80 ? 'near upper band (extended)' : Number(pct) < 20 ? 'near lower band (compressed)' : 'middle of bands'
+        parts.push(`Bollinger Bands(20,2): Upper $${b.upper.toFixed(2)}, Mid $${b.middle.toFixed(2)}, Lower $${b.lower.toFixed(2)} — price is ${pos} (${pct}th percentile of band)`)
+        analyzed.push('bb')
+      }
+    }
+
+    const smaLines: string[] = []
+    const sma20v = sma(closes, 20)[n - 1]
+    const sma50v = sma(closes, 50)[n - 1]
+    const sma200v = sma(closes, 200)[n - 1]
+    if (aiIndicators.has('sma20') && sma20v != null) {
+      const dev = ((last - sma20v) / sma20v * 100).toFixed(1)
+      smaLines.push(`SMA20 $${sma20v.toFixed(2)} (${Number(dev) >= 0 ? '+' : ''}${dev}%)`)
+      analyzed.push('sma20')
+    }
+    if (aiIndicators.has('sma50') && sma50v != null) {
+      const dev = ((last - sma50v) / sma50v * 100).toFixed(1)
+      smaLines.push(`SMA50 $${sma50v.toFixed(2)} (${Number(dev) >= 0 ? '+' : ''}${dev}%)`)
+      analyzed.push('sma50')
+    }
+    if (aiIndicators.has('sma200') && sma200v != null) {
+      const dev = ((last - sma200v) / sma200v * 100).toFixed(1)
+      smaLines.push(`SMA200 $${sma200v.toFixed(2)} (${Number(dev) >= 0 ? '+' : ''}${dev}%)`)
+      analyzed.push('sma200')
+      if (sma50v != null) {
+        smaLines.push(sma50v > sma200v ? 'Golden Cross (50 above 200)' : 'Death Cross (50 below 200)')
+      }
+    }
+    if (smaLines.length) parts.push(`Moving Averages: ${smaLines.join(' | ')}`)
+
+    const emaLines: string[] = []
+    const ema12v = ema(closes, 12)[n - 1]
+    const ema26v = ema(closes, 26)[n - 1]
+    if (aiIndicators.has('ema12') && ema12v != null) {
+      emaLines.push(`EMA12 $${ema12v.toFixed(2)}`)
+      analyzed.push('ema12')
+    }
+    if (aiIndicators.has('ema26') && ema26v != null) {
+      emaLines.push(`EMA26 $${ema26v.toFixed(2)}`)
+      analyzed.push('ema26')
+    }
+    if (ema12v != null && ema26v != null && (aiIndicators.has('ema12') || aiIndicators.has('ema26'))) {
+      emaLines.push(ema12v > ema26v ? 'EMA12 above EMA26 (short-term bullish)' : 'EMA12 below EMA26 (short-term bearish)')
+    }
+    if (emaLines.length) parts.push(`EMA: ${emaLines.join(' | ')}`)
+
+    if (aiIndicators.has('vwap') && intraday) {
+      const vwapVals = calcVWAP(chartData)
+      const v = vwapVals[n - 1]
+      if (v != null) {
+        const rel = last > v ? 'above VWAP (intraday bullish bias)' : 'below VWAP (intraday bearish bias)'
+        parts.push(`VWAP: $${v.toFixed(2)} — price is ${rel}`)
+        analyzed.push('vwap')
+      }
+    }
+
+    if (aiIndicators.has('volume')) {
+      const recentVol = chartData[n - 1]?.volume ?? 0
+      const avgVol = chartData.slice(-20).reduce((a, b) => a + b.volume, 0) / Math.min(20, n)
+      const ratio = (recentVol / (avgVol || 1)).toFixed(2)
+      const volDesc = Number(ratio) > 1.5 ? 'high volume (strong conviction)' : Number(ratio) < 0.5 ? 'low volume (weak conviction)' : 'average volume'
+      parts.push(`Volume: ${(recentVol / 1e6).toFixed(1)}M vs 20-day avg ${(avgVol / 1e6).toFixed(1)}M (${ratio}x) — ${volDesc}`)
+      analyzed.push('volume')
+    }
+
+    if (aiIndicators.has('sr')) {
+      const levels = detectSR(chartData)
+      const resistances = levels.filter(l => l.type === 'resistance' && l.price > last).slice(0, 2)
+      const supports = levels.filter(l => l.type === 'support' && l.price < last).slice(0, 2)
+      const srParts: string[] = []
+      if (resistances.length) srParts.push(`nearest resistance $${resistances[0].price.toFixed(2)}`)
+      if (supports.length)    srParts.push(`nearest support $${supports[0].price.toFixed(2)}`)
+      if (srParts.length) {
+        parts.push(`Support/Resistance: ${srParts.join(', ')}`)
+        analyzed.push('sr')
+      }
+    }
+
+    if (aiIndicators.has('zscore')) {
+      const v = calcZScore(closes, params.zWindow)[n - 1]
+      if (v != null) {
+        const desc = Math.abs(v) > 2 ? 'statistically extreme' : Math.abs(v) > 1 ? 'moderately stretched' : 'near mean'
+        parts.push(`Z-Score(${params.zWindow}-day): ${v.toFixed(2)} — ${desc}`)
+        analyzed.push('zscore')
+      }
+    }
+
+    if (aiIndicators.has('meanrev')) {
+      const smaN = sma(closes, params.meanrevPeriod)
+      const m = smaN[n - 1]
+      if (m != null) {
+        const dev = ((last - m) / m * 100).toFixed(1)
+        parts.push(`Mean Reversion(${params.meanrevPeriod}-day SMA): price is ${Number(dev) >= 0 ? '+' : ''}${dev}% from mean`)
+        analyzed.push('meanrev')
+      }
+    }
+
+    if (aiIndicators.has('linreg')) {
+      const lrVals = calcLinReg(closes)
+      const lrCur = lrVals[n - 1]
+      const lrPrev = lrVals[n - 2]
+      if (lrCur != null) {
+        const slope = lrPrev != null ? lrCur - lrPrev : 0
+        const dev = ((last - lrCur) / lrCur * 100).toFixed(1)
+        const dir = slope > 0 ? 'upward' : 'downward'
+        parts.push(`Linear Regression: trend line at $${lrCur.toFixed(2)} (${dir} slope), price ${Number(dev) >= 0 ? '+' : ''}${dev}% from trend`)
+        analyzed.push('linreg')
+      }
+    }
+
+    const prompt = parts.join('. ') + '. Provide a concise technical analysis summary explaining what these indicators collectively suggest about the current setup.'
 
     try {
-      const res  = await fetch('/api/ai/chat', {
+      const res = await fetch('/api/ai/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: prompt, history: [] }),
       })
       const json = await res.json() as { response?: string; error?: string }
       setAiResponse(json.response ?? json.error ?? 'No response received.')
+      setAiAnalyzed(analyzed)
     } catch {
       setAiResponse('Failed to reach the AI. Please try again.')
     } finally {
       setAiLoading(false)
     }
-  }, [chartData, ticker, period, activeIndicators])
+  }, [chartData, ticker, period, aiIndicators, intraday, params])
 
   // Re-run analysis when params change while a panel is open
   const prevAnalysisRef = useRef<AnalysisKey | null>(null)
@@ -1031,16 +1202,48 @@ export default function TechnicalClient() {
 
           {/* AI Analysis */}
           <div className="bg-[#0F1729] border border-[#1E2D4A] rounded-[6px] p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Bot size={15} className="text-[#2F80ED]" />
-                <h3 className="text-sm font-semibold text-[#F0F4FF]" style={{ fontFamily: 'var(--font-syne)' }}>
-                  AI Technical Analysis
-                </h3>
-              </div>
+            <div className="flex items-center gap-2 mb-4">
+              <Bot size={15} className="text-[#2F80ED]" />
+              <h3 className="text-sm font-semibold text-[#F0F4FF]" style={{ fontFamily: 'var(--font-syne)' }}>
+                AI Technical Analysis
+              </h3>
+            </div>
+
+            {/* Indicator picker */}
+            <p className="text-[9px] text-[#8A99B3] uppercase tracking-widest mb-2 font-medium">
+              Select indicators to analyze
+            </p>
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {AI_INDICATORS.map(ind => {
+                const active = aiIndicators.has(ind.key)
+                return (
+                  <button
+                    key={ind.key}
+                    onClick={() => toggleAIIndicator(ind.key)}
+                    className="text-[11px] px-3 py-1 rounded-[4px] font-medium transition-all flex items-center gap-1.5"
+                    style={{
+                      backgroundColor: active ? `${ind.color}1A` : 'transparent',
+                      color:           active ? ind.color        : '#8A99B3',
+                      border:          `1px solid ${active ? ind.color : '#1E2D4A'}`,
+                    }}
+                  >
+                    {active && (
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: ind.color }} />
+                    )}
+                    {ind.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Run button row */}
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-[#8A99B3] text-xs">
+                {aiIndicators.size} indicator{aiIndicators.size !== 1 ? 's' : ''} selected
+              </p>
               <button
                 onClick={runAI}
-                disabled={aiLoading || !chartData.length}
+                disabled={aiLoading || !chartData.length || aiIndicators.size === 0}
                 className="bg-[#2F80ED] hover:bg-[#4FA3FF] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-1.5 rounded-[4px] transition-colors flex items-center gap-1.5"
               >
                 {aiLoading && (
@@ -1049,13 +1252,40 @@ export default function TechnicalClient() {
                 {aiLoading ? 'Analyzing…' : 'Run AI Analysis'}
               </button>
             </div>
+
+            {/* Response */}
             {aiResponse ? (
-              <p className="text-[#F0F4FF] text-sm leading-relaxed">{aiResponse}</p>
-            ) : (
+              <div className="border-t border-[#1E2D4A] pt-4">
+                {aiAnalyzed.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {aiAnalyzed.map(key => {
+                      const ind = AI_INDICATORS.find(i => i.key === key)
+                      if (!ind) return null
+                      return (
+                        <span
+                          key={key}
+                          className="text-[10px] px-2 py-0.5 rounded-[3px] font-medium"
+                          style={{
+                            backgroundColor: `${ind.color}1A`,
+                            color: ind.color,
+                            border: `1px solid ${ind.color}44`,
+                          }}
+                        >
+                          {ind.label}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="text-[#F0F4FF] text-sm leading-relaxed">{aiResponse}</p>
+              </div>
+            ) : !aiLoading ? (
               <p className="text-[#8A99B3] text-sm">
-                Load a chart, then click &quot;Run AI Analysis&quot; for an educational summary of the current technicals.
+                {aiIndicators.size === 0
+                  ? 'Select at least one indicator above, then click "Run AI Analysis."'
+                  : 'Click "Run AI Analysis" to get an educational summary of the selected indicators.'}
               </p>
-            )}
+            ) : null}
           </div>
         </>
       )}
