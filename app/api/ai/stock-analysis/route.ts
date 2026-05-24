@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { geminiChat } from '@/lib/gemini'
+import { geminiJSON } from '@/lib/gemini'
 import { METRIC_DEFS } from '@/lib/analysisMetrics'
 import YahooFinance from 'yahoo-finance2'
 
@@ -138,10 +138,15 @@ function detectRegime(closes: number[]): {
   label: 'Trending Up' | 'Choppy' | 'Trending Down'
   confidence: number
   daysInRegime: number
+  history: { index: number; label: 'up' | 'down' | 'choppy' }[]
+  distribution: { up: number; choppy: number; down: number }
 } {
   const windowSize = Math.min(20, Math.floor(closes.length / 3))
   if (closes.length < windowSize + 5) {
-    return { label: 'Choppy', confidence: 55, daysInRegime: windowSize }
+    return {
+      label: 'Choppy', confidence: 55, daysInRegime: windowSize,
+      history: [], distribution: { up: 0, choppy: 100, down: 0 },
+    }
   }
 
   const returns = closes.slice(1).map((c, i) => (c - closes[i]) / closes[i])
@@ -174,11 +179,29 @@ function detectRegime(closes: number[]): {
     }
   }
 
+  // Build rolling history across full series for timeline visualization
+  const history: { index: number; label: 'up' | 'down' | 'choppy' }[] = []
+  const histStep = Math.max(2, Math.floor(windowSize / 4))
+  for (let end = windowSize; end <= n; end += histStep) {
+    history.push({ index: end, label: classifyWindow(returns.slice(end - windowSize, end)) })
+  }
+
+  // Distribution: % of time in each state across the full history
+  const total = history.length || 1
+  const upCount = history.filter(h => h.label === 'up').length
+  const downCount = history.filter(h => h.label === 'down').length
+  const choppyCount = history.filter(h => h.label === 'choppy').length
+  const distribution = {
+    up:     Math.round((upCount     / total) * 100),
+    choppy: Math.round((choppyCount / total) * 100),
+    down:   Math.round((downCount   / total) * 100),
+  }
+
   const upDays = returns.slice(-windowSize).filter((r) => r > 0).length
   const dominance = Math.max(upDays, windowSize - upDays) / windowSize
   const confidence = Math.round(Math.min(92, Math.max(55, 50 + (dominance - 0.5) * 100)))
 
-  return { label: currentLabel, confidence, daysInRegime: Math.min(daysInRegime, n) }
+  return { label: currentLabel, confidence, daysInRegime: Math.min(daysInRegime, n), history, distribution }
 }
 
 function runMonteCarlo(
@@ -427,7 +450,7 @@ export async function POST(req: NextRequest) {
 
     const regime = closes.length >= 15
       ? detectRegime(closes)
-      : { label: 'Choppy' as const, confidence: 50, daysInRegime: 0 }
+      : { label: 'Choppy' as const, confidence: 50, daysInRegime: 0, history: [] as { index: number; label: 'up' | 'down' | 'choppy' }[], distribution: { up: 0, choppy: 100, down: 0 } }
 
     const monteCarlo = closes.length >= 20 ? runMonteCarlo(closes) : null
 
@@ -575,7 +598,7 @@ Output a raw JSON object only — no markdown, no backticks, no code fences, no 
     // ── 9. Call Gemini ───────────────────────────────────────────────────────
     let rawResponse: string
     try {
-      rawResponse = await geminiChat(prompt)
+      rawResponse = await geminiJSON(prompt)
     } catch {
       return NextResponse.json({ error: 'AI service temporarily unavailable' }, { status: 503 })
     }
@@ -597,7 +620,7 @@ Output a raw JSON object only — no markdown, no backticks, no code fences, no 
 
     return NextResponse.json({
       ...parsed,
-      regime: { label: regime.label, confidence: regime.confidence, daysInRegime: regime.daysInRegime },
+      regime: { label: regime.label, confidence: regime.confidence, daysInRegime: regime.daysInRegime, history: regime.history, distribution: regime.distribution },
       metrics: metricResults,
       monteCarlo,
       monteCarloParams,

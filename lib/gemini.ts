@@ -61,6 +61,27 @@ export async function geminiChat(prompt: string): Promise<string> {
 }
 
 /**
+ * Send a prompt that MUST return valid JSON.
+ * Uses responseMimeType:"application/json" so Gemini guarantees structured output.
+ * No system prompt is injected — the prompt itself contains all instructions.
+ */
+export async function geminiJSON(prompt: string): Promise<string> {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  const model = genAI.getGenerativeModel({
+    model: MODEL_NAME,
+    safetySettings: SAFETY_SETTINGS,
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.9,
+      maxOutputTokens: 512,
+      responseMimeType: 'application/json',
+    },
+  });
+  const result = await model.generateContent(prompt);
+  return result.response.text();
+}
+
+/**
  * Send a multi-turn conversation and return the next assistant message.
  * history is an array of prior messages (role: "user" | "model").
  * Use for the /assistant chat page.

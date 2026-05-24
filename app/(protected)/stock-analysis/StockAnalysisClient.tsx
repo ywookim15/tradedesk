@@ -64,7 +64,13 @@ type AIResult = {
   fundamentalsScore: number
   technicalsScore: number
   regimeScore: number
-  regime: { label: string; confidence: number; daysInRegime: number }
+  regime: {
+    label: string
+    confidence: number
+    daysInRegime: number
+    history?: { index: number; label: 'up' | 'down' | 'choppy' }[]
+    distribution?: { up: number; choppy: number; down: number }
+  }
   metrics: MetricResult[]
   monteCarlo?: MonteCarloResult | null
   monteCarloParams?: MCParams | null
@@ -589,13 +595,22 @@ function TechCard({ metric }: { metric: MetricResult }) {
 // ── Regime visualization card ─────────────────────────────────────────────────
 
 function RegimeCard({ regime, metric }: {
-  regime: { label: string; confidence: number; daysInRegime: number }
+  regime: {
+    label: string
+    confidence: number
+    daysInRegime: number
+    history?: { index: number; label: 'up' | 'down' | 'choppy' }[]
+    distribution?: { up: number; choppy: number; down: number }
+  }
   metric?: MetricResult
 }) {
   const color = regime.label === 'Trending Up' ? '#00C896'
     : regime.label === 'Trending Down' ? '#FF4D4D' : '#F59E0B'
 
   const regimeIcon = regime.label === 'Trending Up' ? '↗' : regime.label === 'Trending Down' ? '↘' : '↔'
+
+  const stateColor = (lbl: 'up' | 'down' | 'choppy') =>
+    lbl === 'up' ? '#00C896' : lbl === 'down' ? '#FF4D4D' : '#F59E0B'
 
   return (
     <div className="bg-[#0A0F1E] border border-[#1E2D4A] rounded-[6px] p-5">
@@ -621,7 +636,7 @@ function RegimeCard({ regime, metric }: {
             </div>
             <div>
               <p className="text-[9px] text-[#8A99B3] uppercase tracking-widest">Detection Method</p>
-              <p className="text-xs text-[#8A99B3]">Rolling Sharpe signal (20-period window)</p>
+              <p className="text-xs text-[#8A99B3]">Rolling Sharpe signal · 20-period window</p>
             </div>
           </div>
           {metric && (
@@ -631,12 +646,12 @@ function RegimeCard({ regime, metric }: {
           )}
         </div>
 
-        {/* Regime state bars */}
+        {/* Current regime state tiles */}
         <div className="w-full grid grid-cols-3 gap-3">
           {[
-            { label: 'Trending Up',   color: '#00C896', active: regime.label === 'Trending Up'   },
-            { label: 'Choppy',        color: '#F59E0B', active: regime.label === 'Choppy'         },
-            { label: 'Trending Down', color: '#FF4D4D', active: regime.label === 'Trending Down'  },
+            { label: 'Trending Up',   color: '#00C896', key: 'up'   as const, active: regime.label === 'Trending Up'   },
+            { label: 'Choppy',        color: '#F59E0B', key: 'choppy' as const, active: regime.label === 'Choppy'       },
+            { label: 'Trending Down', color: '#FF4D4D', key: 'down' as const, active: regime.label === 'Trending Down'  },
           ].map(s => (
             <div key={s.label}
               className="rounded-[4px] px-3 py-2 text-center border"
@@ -650,9 +665,67 @@ function RegimeCard({ regime, metric }: {
               {s.active && (
                 <p className="text-[8px] text-[#8A99B3] mt-0.5">{regime.confidence}% confidence</p>
               )}
+              {regime.distribution && (
+                <p className="text-[9px] font-bold mt-1" style={{ color: s.active ? s.color : '#4A5568' }}>
+                  {regime.distribution[s.key]}% of period
+                </p>
+              )}
             </div>
           ))}
         </div>
+
+        {/* Distribution stacked bar */}
+        {regime.distribution && (
+          <div className="w-full">
+            <p className="text-[9px] text-[#8A99B3] uppercase tracking-widest mb-2 font-medium">Time Spent in Each State</p>
+            <div className="flex h-3 rounded-full overflow-hidden gap-px">
+              {regime.distribution.up > 0 && (
+                <div style={{ width: `${regime.distribution.up}%`, backgroundColor: '#00C896', minWidth: 2 }} />
+              )}
+              {regime.distribution.choppy > 0 && (
+                <div style={{ width: `${regime.distribution.choppy}%`, backgroundColor: '#F59E0B', minWidth: 2 }} />
+              )}
+              {regime.distribution.down > 0 && (
+                <div style={{ width: `${regime.distribution.down}%`, backgroundColor: '#FF4D4D', minWidth: 2 }} />
+              )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5">
+              <span className="text-[10px] font-medium" style={{ color: '#00C896' }}>
+                ↗ Trending Up <span className="opacity-60">({regime.distribution.up}%)</span>
+              </span>
+              <span className="text-[10px] font-medium" style={{ color: '#F59E0B' }}>
+                ↔ Choppy <span className="opacity-60">({regime.distribution.choppy}%)</span>
+              </span>
+              <span className="text-[10px] font-medium" style={{ color: '#FF4D4D' }}>
+                ↘ Trending Down <span className="opacity-60">({regime.distribution.down}%)</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Rolling history timeline */}
+        {regime.history && regime.history.length > 1 && (
+          <div className="w-full">
+            <p className="text-[9px] text-[#8A99B3] uppercase tracking-widest mb-2 font-medium">
+              Regime Timeline — oldest → newest ({regime.history.length} windows)
+            </p>
+            <div className="flex gap-px h-7 rounded overflow-hidden">
+              {regime.history.map((h, i) => (
+                <div
+                  key={i}
+                  className="flex-1"
+                  style={{ backgroundColor: stateColor(h.label), opacity: 0.75, minWidth: 2 }}
+                  title={`Window ${h.index}: ${h.label === 'up' ? 'Trending Up' : h.label === 'down' ? 'Trending Down' : 'Choppy'}`}
+                />
+              ))}
+            </div>
+            <div className="flex justify-between text-[8px] text-[#8A99B3] mt-1">
+              <span>Start of period</span>
+              <span>← each segment = {Math.round(20 / 4)}-bar window →</span>
+              <span>Most recent</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
