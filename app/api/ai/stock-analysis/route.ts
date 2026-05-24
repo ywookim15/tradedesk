@@ -181,6 +181,65 @@ function detectRegime(closes: number[]): {
   return { label: currentLabel, confidence, daysInRegime: Math.min(daysInRegime, n) }
 }
 
+function runMonteCarlo(
+  closes: number[],
+  horizon = 90,
+  simulations = 1000,
+): { percentiles: { day: number; p10: number; p25: number; p50: number; p75: number; p90: number }[]; currentPrice: number; horizon: number } | null {
+  if (closes.length < 20) return null
+  const S0 = closes[closes.length - 1]
+  const logRets = closes.slice(1).map((c, i) => Math.log(c / closes[i]))
+  const n = logRets.length
+  const mu = logRets.reduce((a, b) => a + b, 0) / n
+  const variance = logRets.reduce((a, b) => a + (b - mu) ** 2, 0) / n
+  const sigma = Math.sqrt(variance)
+  const drift = mu - 0.5 * variance
+
+  function randn(): number {
+    let u = 0, v = 0
+    while (u === 0) u = Math.random()
+    while (v === 0) v = Math.random()
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
+  }
+
+  const checkpoints: number[] = []
+  for (let d = 15; d <= horizon; d += 15) checkpoints.push(d)
+  if (checkpoints[checkpoints.length - 1] !== horizon) checkpoints.push(horizon)
+
+  const buckets: number[][] = checkpoints.map(() => [])
+  for (let s = 0; s < simulations; s++) {
+    let price = S0
+    let cpIdx = 0
+    for (let d = 1; d <= horizon; d++) {
+      price *= Math.exp(drift + sigma * randn())
+      if (cpIdx < checkpoints.length && d === checkpoints[cpIdx]) {
+        buckets[cpIdx].push(price)
+        cpIdx++
+      }
+    }
+  }
+
+  function pctile(arr: number[], p: number): number {
+    const sorted = [...arr].sort((a, b) => a - b)
+    const idx = (p / 100) * (sorted.length - 1)
+    const lo = Math.floor(idx), hi = Math.ceil(idx)
+    return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)
+  }
+
+  return {
+    percentiles: checkpoints.map((day, i) => ({
+      day,
+      p10: pctile(buckets[i], 10),
+      p25: pctile(buckets[i], 25),
+      p50: pctile(buckets[i], 50),
+      p75: pctile(buckets[i], 75),
+      p90: pctile(buckets[i], 90),
+    })),
+    currentPrice: S0,
+    horizon,
+  }
+}
+
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
 function fmt(v: number | null, decimals = 2, suffix = ''): string {
@@ -225,6 +284,15 @@ function formatMetricValue(
     case 'atr':             return '$' + value.toFixed(2)
     default:                return value.toFixed(2)
   }
+}
+
+function extractJSON(raw: string): string {
+  let str = raw.trim()
+  str = str.replace(/^```(?:json)?\s*/im, '').replace(/\n?```\s*$/m, '').trim()
+  const start = str.indexOf('{')
+  const end = str.lastIndexOf('}')
+  if (start !== -1 && end > start) return str.slice(start, end + 1)
+  return str
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────────
@@ -317,6 +385,8 @@ export async function POST(req: NextRequest) {
       ? detectRegime(closes)
       : { label: 'Choppy' as const, confidence: 50, daysInRegime: 0 }
 
+    const monteCarlo = closes.length >= 20 ? runMonteCarlo(closes) : null
+
     // ── 6. Watchlist & journal context ───────────────────────────────────────
     const [watchRes, journalRes] = await Promise.allSettled([
       supabase.from('watchlist').select('id').eq('user_id', user.id).eq('ticker', symbol.toUpperCase()).maybeSingle(),
@@ -383,6 +453,7 @@ export async function POST(req: NextRequest) {
         label:       def.label,
         category:    def.category,
         value:       formatMetricValue(def.key, value, ctx),
+        rawValue:    value,
         signal:      def.getSignal(value, ctx),
         explanation: def.explain(value, ctx),
       }
@@ -445,15 +516,8 @@ Step 4 — VERDICT: Weigh all evidence. BUY = favorable setup with manageable ri
 
 Score each category 0-10: fundamentals, technicals, and regime quality.
 
-Respond ONLY with valid JSON and no other text:
-{
-  "verdict": "BUY" | "WAIT" | "AVOID",
-  "confidence": <integer 0-100>,
-  "summary": "<2-3 plain-English sentences explaining the verdict and key reasons>",
-  "fundamentalsScore": <integer 0-10>,
-  "technicalsScore": <integer 0-10>,
-  "regimeScore": <integer 0-10>
-}`
+Output a raw JSON object only — no markdown, no backticks, no code fences, no explanation before or after. Just the JSON object:
+{"verdict":"BUY","confidence":72,"summary":"...","fundamentalsScore":7,"technicalsScore":6,"regimeScore":7}`
 
     // ── 9. Call Gemini ───────────────────────────────────────────────────────
     let rawResponse: string
@@ -473,14 +537,17 @@ Respond ONLY with valid JSON and no other text:
       regimeScore: number
     }
     try {
-      const m = rawResponse.match(/```json\s*([\s\S]*?)\s*```/) || rawResponse.match(/(\{[\s\S]*\})/)
-      const jsonStr = m ? (m[1] ?? m[0]) : rawResponse
-      parsed = JSON.parse(jsonStr.trim())
+      const jsonStr = extractJSON(rawResponse)
+      parsed = JSON.parse(jsonStr)
       if (!['BUY', 'WAIT', 'AVOID'].includes(parsed.verdict)) throw new Error('Bad verdict')
+      if (typeof parsed.summary !== 'string') throw new Error('Bad summary')
     } catch {
       const up = rawResponse.toUpperCase()
-      const verdict = up.includes('BUY') ? 'BUY' : up.includes('AVOID') ? 'AVOID' : 'WAIT'
-      parsed = { verdict, confidence: 50, summary: rawResponse.slice(0, 400), fundamentalsScore: 5, technicalsScore: 5, regimeScore: 5 }
+      const verdict: 'BUY' | 'WAIT' | 'AVOID' = up.includes('AVOID') ? 'AVOID' : up.includes('BUY') ? 'BUY' : 'WAIT'
+      // Try to recover summary from raw text
+      const sumMatch = rawResponse.match(/"summary"\s*:\s*"([^"]{0,600})"/)
+      const summary = sumMatch ? sumMatch[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : 'Analysis complete — see detailed metrics below for the full breakdown.'
+      parsed = { verdict, confidence: 60, summary, fundamentalsScore: 5, technicalsScore: 5, regimeScore: 5 }
     }
 
     // ── 11. Increment counter ────────────────────────────────────────────────
@@ -492,6 +559,7 @@ Respond ONLY with valid JSON and no other text:
       ...parsed,
       regime: { label: regime.label, confidence: regime.confidence, daysInRegime: regime.daysInRegime },
       metrics: metricResults,
+      monteCarlo,
       queriesUsed: queriesUsed + 1,
       queriesLimit: isPro ? null : FREE_DAILY_LIMIT,
     })
