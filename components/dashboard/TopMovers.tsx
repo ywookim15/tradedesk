@@ -19,7 +19,7 @@ function MoverRow({ m, delay }: { m: Mover; delay: number }) {
 
   return (
     <button
-      onClick={() => router.push(`/technical?ticker=${m.symbol}`)}
+      onClick={() => router.push(`/stock-analysis?ticker=${m.symbol}`)}
       className="w-full flex items-center justify-between px-3 py-2.5 rounded-[4px] hover:bg-[#1E2D4A]/50 transition-colors group text-left"
       style={{ animation: 'fadeUp 0.35s ease both', animationDelay: `${delay}ms` }}
     >

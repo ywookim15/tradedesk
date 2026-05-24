@@ -91,7 +91,7 @@ export default function WatchlistSnapshot() {
           return (
             <button
               key={item.ticker}
-              onClick={() => router.push(`/technical?ticker=${item.ticker}`)}
+              onClick={() => router.push(`/stock-analysis?ticker=${item.ticker}`)}
               className="flex items-center justify-between px-4 py-2.5 hover:bg-[#1E2D4A]/50 transition-colors text-left border-b border-[#1E2D4A]/40 last:border-0"
             >
               <span className="text-xs font-bold text-[#F0F4FF] hover:text-[#2F80ED] transition-colors">

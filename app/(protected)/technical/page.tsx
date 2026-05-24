@@ -1,10 +1,10 @@
-import { Suspense } from 'react'
-import TechnicalClient from './TechnicalClient'
+import { redirect } from 'next/navigation'
 
-export default function TechnicalPage() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-[#0A0F1E]" />}>
-      <TechnicalClient />
-    </Suspense>
-  )
+export default function TechnicalPage({
+  searchParams,
+}: {
+  searchParams: { ticker?: string }
+}) {
+  const ticker = searchParams.ticker
+  redirect(ticker ? `/stock-analysis?ticker=${ticker}` : '/stock-analysis')
 }

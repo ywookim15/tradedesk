@@ -105,7 +105,7 @@ export default function WatchlistClient() {
   }
 
   function handleRowClick(ticker: string) {
-    router.push(`/technical?ticker=${ticker}`)
+    router.push(`/stock-analysis?ticker=${ticker}`)
   }
 
   return (

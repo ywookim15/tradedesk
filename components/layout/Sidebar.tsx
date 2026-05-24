@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import {
-  TrendingUp, LayoutDashboard, Mic, LineChart, BarChart2,
+  TrendingUp, LayoutDashboard, Mic, BarChart2,
   Eye, Briefcase, BookOpen, Settings, LogOut,
   ChevronLeft, ChevronRight, Sun, Moon,
 } from 'lucide-react'
@@ -21,21 +21,20 @@ export interface SidebarUser {
 }
 
 const NAV = [
-  { href: '/dashboard',    icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/assistant',    icon: Mic,             label: 'AI Assistant' },
-  { href: '/technical',    icon: LineChart,        label: 'Technical' },
-  { href: '/fundamental',  icon: BarChart2,        label: 'Fundamental' },
-  { href: '/watchlist',    icon: Eye,              label: 'Watchlist' },
-  { href: '/portfolio',    icon: Briefcase,        label: 'Portfolio' },
-  { href: '/journal',      icon: BookOpen,         label: 'Trade Journal' },
+  { href: '/dashboard',      icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/assistant',      icon: Mic,             label: 'AI Assistant' },
+  { href: '/stock-analysis', icon: BarChart2,       label: 'Stock Analysis' },
+  { href: '/watchlist',      icon: Eye,             label: 'Watchlist' },
+  { href: '/portfolio',      icon: Briefcase,       label: 'Portfolio' },
+  { href: '/journal',        icon: BookOpen,        label: 'Trade Journal' },
 ]
 
 const MOBILE_NAV = [
-  { href: '/dashboard',   icon: LayoutDashboard, label: 'Dash' },
-  { href: '/assistant',   icon: Mic,             label: 'AI' },
-  { href: '/technical',   icon: LineChart,       label: 'Charts' },
-  { href: '/watchlist',   icon: Eye,             label: 'Watch' },
-  { href: '/portfolio',   icon: Briefcase,       label: 'Portfolio' },
+  { href: '/dashboard',      icon: LayoutDashboard, label: 'Dash' },
+  { href: '/assistant',      icon: Mic,             label: 'AI' },
+  { href: '/stock-analysis', icon: BarChart2,       label: 'Analysis' },
+  { href: '/watchlist',      icon: Eye,             label: 'Watch' },
+  { href: '/portfolio',      icon: Briefcase,       label: 'Portfolio' },
 ]
 
 export default function Sidebar({ user }: { user: SidebarUser }) {

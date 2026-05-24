@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
           'financialData',
           'price',
           'summaryProfile',
+          'calendarEvents',
         ],
       }),
       yf.quote(symbol),
@@ -63,30 +64,48 @@ export async function GET(req: NextRequest) {
     const fd = summary.financialData
     const pr = summary.price
     const sp = summary.summaryProfile
+    const ce = summary.calendarEvents
+
+    // Next earnings date: first upcoming date from calendarEvents
+    let nextEarningsDate: string | null = null
+    try {
+      const earningsDates = (ce as { earnings?: { earningsDate?: Date[] } } | null)?.earnings?.earningsDate
+      if (Array.isArray(earningsDates) && earningsDates.length > 0) {
+        const upcoming = earningsDates.find((d) => d instanceof Date && d > new Date())
+          ?? earningsDates[0]
+        if (upcoming instanceof Date) nextEarningsDate = upcoming.toISOString().split('T')[0]
+      }
+    } catch { /* optional field */ }
 
     return NextResponse.json({
       symbol,
       name:          pr?.longName ?? pr?.shortName ?? (quote as { longName?: string }).longName ?? symbol,
       sector:        sp?.sector   ?? null,
       industry:      sp?.industry ?? null,
+      country:       (sp as { country?: string } | null)?.country ?? null,
       description:   sp?.longBusinessSummary?.slice(0, 400) ?? null,
 
       price:         (pr?.regularMarketPrice         ?? (quote as { regularMarketPrice?: number }).regularMarketPrice         ?? 0) as number,
       change:        (pr?.regularMarketChange        ?? (quote as { regularMarketChange?: number }).regularMarketChange        ?? 0) as number,
       changePercent: (pr?.regularMarketChangePercent ?? (quote as { regularMarketChangePercent?: number }).regularMarketChangePercent ?? 0) as number,
 
-      peRatio:       (sd?.trailingPE  ?? null) as number | null,
-      forwardPE:     (sd?.forwardPE   ?? null) as number | null,
-      eps:           (ks?.trailingEps ?? null) as number | null,
-      beta:          (sd?.beta ?? (ks as { beta?: number })?.beta ?? null) as number | null,
-      dividendYield: (sd?.dividendYield ?? null) as number | null,
-      marketCap:     (sd?.marketCap ?? (pr as { marketCap?: number })?.marketCap ?? null) as number | null,
-      week52High:    (sd?.fiftyTwoWeekHigh ?? null) as number | null,
-      week52Low:     (sd?.fiftyTwoWeekLow  ?? null) as number | null,
-      revenue:       (fd?.totalRevenue     ?? null) as number | null,
-      profitMargin:  (fd?.profitMargins ?? (ks as { profitMargins?: number })?.profitMargins ?? null) as number | null,
-      roe:           (fd?.returnOnEquity   ?? null) as number | null,
-      revenuePerShare: (fd?.revenuePerShare ?? null) as number | null,
+      peRatio:          (sd?.trailingPE  ?? null) as number | null,
+      forwardPE:        (sd?.forwardPE   ?? null) as number | null,
+      eps:              (ks?.trailingEps ?? null) as number | null,
+      beta:             (sd?.beta ?? (ks as { beta?: number })?.beta ?? null) as number | null,
+      dividendYield:    (sd?.dividendYield ?? null) as number | null,
+      marketCap:        (sd?.marketCap ?? (pr as { marketCap?: number })?.marketCap ?? null) as number | null,
+      enterpriseValue:  (ks?.enterpriseValue ?? null) as number | null,
+      week52High:       (sd?.fiftyTwoWeekHigh ?? null) as number | null,
+      week52Low:        (sd?.fiftyTwoWeekLow  ?? null) as number | null,
+      revenue:          (fd?.totalRevenue     ?? null) as number | null,
+      profitMargin:     (fd?.profitMargins ?? (ks as { profitMargins?: number })?.profitMargins ?? null) as number | null,
+      roe:              (fd?.returnOnEquity   ?? null) as number | null,
+      debtToEquity:     (fd?.debtToEquity     ?? null) as number | null,
+      sharesOutstanding:(ks?.sharesOutstanding ?? (ks as { commonStockSharesOutstanding?: number })?.commonStockSharesOutstanding ?? null) as number | null,
+      revenuePerShare:  (fd?.revenuePerShare  ?? null) as number | null,
+      analystPriceTarget: (fd?.targetMeanPrice ?? null) as number | null,
+      nextEarningsDate,
 
       analystRating,
     })

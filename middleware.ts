@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const PROTECTED_ROUTES = [
   "/dashboard",
   "/assistant",
+  "/stock-analysis",
   "/technical",
   "/fundamental",
   "/watchlist",
