@@ -55,6 +55,8 @@ type MetricResult = {
   explanation: string
 }
 
+type MCParams = { mu: number; sigma: number; drift: number; currentPrice: number }
+
 type AIResult = {
   verdict: 'BUY' | 'WAIT' | 'AVOID'
   confidence: number
@@ -65,6 +67,7 @@ type AIResult = {
   regime: { label: string; confidence: number; daysInRegime: number }
   metrics: MetricResult[]
   monteCarlo?: MonteCarloResult | null
+  monteCarloParams?: MCParams | null
   queriesUsed?: number
   queriesLimit?: number | null
   error?: string
@@ -110,6 +113,57 @@ const TOOLTIPS: Record<string, string> = {
   nextEarnings:     "The next scheduled earnings release date — often a catalyst for price movement.",
   analystRating:    "Consensus analyst recommendation from Wall Street. Treat as context, not a signal — analysts lag the market.",
   priceTarget:      "Average analyst 12-month price target. Compare to current price to estimate implied upside/downside.",
+}
+
+// ── Monte Carlo constants ──────────────────────────────────────────────────────
+
+const MC_HORIZONS: { label: string; days: number }[] = [
+  { label: '1 Day',      days: 1   },
+  { label: '3 Days',     days: 3   },
+  { label: '7 Days',     days: 7   },
+  { label: '14 Days',    days: 14  },
+  { label: '30 Days',    days: 30  },
+  { label: '60 Days',    days: 60  },
+  { label: '90 Days',    days: 90  },
+  { label: 'Half-Year',  days: 126 },
+  { label: '1 Year',     days: 252 },
+  { label: '2 Years',    days: 504 },
+]
+
+const MC_SIMS_OPTIONS = [100, 500, 1_000, 2_000, 5_000]
+
+function clientMC(params: MCParams, horizon: number, simulations: number): MonteCarloResult {
+  const { drift, sigma, currentPrice } = params
+  function randn(): number {
+    let u = 0, v = 0
+    while (u === 0) u = Math.random()
+    while (v === 0) v = Math.random()
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
+  }
+  const maxCp = Math.min(10, horizon)
+  const step = Math.max(1, Math.ceil(horizon / maxCp))
+  const checkpoints: number[] = []
+  for (let d = step; d < horizon; d += step) checkpoints.push(d)
+  checkpoints.push(horizon)
+  const buckets: number[][] = checkpoints.map(() => [])
+  for (let s = 0; s < simulations; s++) {
+    let price = currentPrice; let cpIdx = 0
+    for (let d = 1; d <= horizon; d++) {
+      price *= Math.exp(drift + sigma * randn())
+      if (cpIdx < checkpoints.length && d === checkpoints[cpIdx]) { buckets[cpIdx].push(price); cpIdx++ }
+    }
+  }
+  function pct(arr: number[], p: number): number {
+    const sorted = [...arr].sort((a, b) => a - b)
+    const idx = (p / 100) * (sorted.length - 1)
+    const lo = Math.floor(idx), hi = Math.ceil(idx)
+    return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)
+  }
+  return {
+    percentiles: checkpoints.map((day, i) => ({ day, p10: pct(buckets[i], 10), p25: pct(buckets[i], 25), p50: pct(buckets[i], 50), p75: pct(buckets[i], 75), p90: pct(buckets[i], 90) })),
+    currentPrice,
+    horizon,
+  }
 }
 
 // ── Helper formatters ──────────────────────────────────────────────────────────
@@ -616,6 +670,10 @@ export default function StockAnalysisClient() {
   const [aiResult,     setAiResult]     = useState<AIResult | null>(null)
   const [aiLoading,    setAiLoading]    = useState(false)
   const [detailedOpen, setDetailedOpen] = useState(false)
+  const [mcHorizon,    setMcHorizon]    = useState(90)
+  const [mcSims,       setMcSims]       = useState(1_000)
+  const [mcData,       setMcData]       = useState<MonteCarloResult | null>(null)
+  const [mcComputing,  setMcComputing]  = useState(false)
 
   const searchParams = useSearchParams()
 
@@ -624,6 +682,22 @@ export default function StockAnalysisClient() {
     if (sym) { setSearchInput(sym); loadStock(sym) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Recompute Monte Carlo client-side whenever horizon, sims, or params change
+  useEffect(() => {
+    const params = aiResult?.monteCarloParams
+    if (!params) {
+      setMcData(aiResult?.monteCarlo ?? null)
+      return
+    }
+    setMcComputing(true)
+    // Small timeout so React can paint the loading state first
+    const timer = setTimeout(() => {
+      setMcData(clientMC(params, mcHorizon, mcSims))
+      setMcComputing(false)
+    }, 10)
+    return () => clearTimeout(timer)
+  }, [aiResult, mcHorizon, mcSims])
 
   const loadStock = useCallback(async (sym: string) => {
     setLoading(true)
@@ -1042,54 +1116,93 @@ export default function StockAnalysisClient() {
                     })()}
 
                     {/* Monte Carlo */}
-                    {aiResult.monteCarlo && (
+                    {aiResult.monteCarloParams && (
                       <div className="bg-[#0A0F1E] border border-[#1E2D4A] rounded-[6px] p-5">
-                        <p className="text-[9px] text-[#8A99B3] uppercase tracking-widest mb-1 font-medium">Monte Carlo Simulation</p>
-                        <p className="text-xs text-[#8A99B3] mb-4">
-                          1,000 simulated price paths · {aiResult.monteCarlo.horizon} trading days forward · based on historical volatility
-                        </p>
-
-                        <MonteCarloChart mc={aiResult.monteCarlo} currentPrice={fundamentals.price} />
-
-                        {/* Summary stats */}
-                        {(() => {
-                          const last = aiResult.monteCarlo.percentiles[aiResult.monteCarlo.percentiles.length - 1]
-                          const cp = fundamentals.price
-                          const fmtChg = (p: number) => {
-                            const pct = (p / cp - 1) * 100
-                            return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
-                          }
-                          return (
-                            <div className="mt-4 pt-4 border-t border-[#1E2D4A]">
-                              <p className="text-xs text-[#8A99B3] mb-3">
-                                After <span className="text-[#F0F4FF] font-semibold">{aiResult.monteCarlo.horizon} trading days</span>, based on 1,000 simulations:
-                              </p>
-                              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                                {[
-                                  { label: 'Pessimistic (P10)',   val: last.p10, color: '#FF4D4D' },
-                                  { label: 'Below median (P25)',  val: last.p25, color: '#FF6B6B' },
-                                  { label: 'Median (P50)',        val: last.p50, color: '#F0F4FF' },
-                                  { label: 'Above median (P75)',  val: last.p75, color: '#4FA3FF' },
-                                  { label: 'Optimistic (P90)',    val: last.p90, color: '#00C896' },
-                                ].map(s => (
-                                  <div key={s.label} className="bg-[#0F1729] border border-[#1E2D4A] rounded-[4px] p-3 text-center">
-                                    <p className="text-[9px] text-[#8A99B3] mb-1">{s.label}</p>
-                                    <p className="text-sm font-bold" style={{ color: s.color, fontFamily: 'var(--font-syne)' }}>
-                                      ${s.val.toFixed(2)}
-                                    </p>
-                                    <p className="text-[10px] mt-0.5" style={{ color: s.color }}>{fmtChg(s.val)}</p>
-                                  </div>
+                        <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+                          <div>
+                            <p className="text-[9px] text-[#8A99B3] uppercase tracking-widest font-medium mb-0.5">Monte Carlo Simulation</p>
+                            <p className="text-xs text-[#8A99B3]">Geometric Brownian Motion · based on historical return distribution</p>
+                          </div>
+                          {/* Controls */}
+                          <div className="flex flex-wrap items-end gap-3">
+                            <div>
+                              <label className="block text-[9px] text-[#8A99B3] uppercase tracking-widest mb-1">Horizon</label>
+                              <select
+                                value={mcHorizon}
+                                onChange={(e) => setMcHorizon(Number(e.target.value))}
+                                className="bg-[#0F1729] border border-[#1E2D4A] text-[#F0F4FF] text-xs px-2.5 py-1.5 rounded-[4px] outline-none focus:border-[#2F80ED] cursor-pointer"
+                              >
+                                {MC_HORIZONS.map(h => (
+                                  <option key={h.days} value={h.days}>{h.label} ({h.days}d)</option>
                                 ))}
-                              </div>
-                              <p className="text-[11px] text-[#8A99B3] mt-3">
-                                <span className="text-[#F0F4FF]">50% probability</span> price lands between{' '}
-                                <span style={{ color: '#4FA3FF' }}>${last.p25.toFixed(2)}</span> and{' '}
-                                <span style={{ color: '#4FA3FF' }}>${last.p75.toFixed(2)}</span> in {aiResult.monteCarlo.horizon} trading days.
-                                This is an educational simulation based on historical price behavior — not a prediction.
-                              </p>
+                              </select>
                             </div>
-                          )
-                        })()}
+                            <div>
+                              <label className="block text-[9px] text-[#8A99B3] uppercase tracking-widest mb-1">Simulations</label>
+                              <select
+                                value={mcSims}
+                                onChange={(e) => setMcSims(Number(e.target.value))}
+                                className="bg-[#0F1729] border border-[#1E2D4A] text-[#F0F4FF] text-xs px-2.5 py-1.5 rounded-[4px] outline-none focus:border-[#2F80ED] cursor-pointer"
+                              >
+                                {MC_SIMS_OPTIONS.map(n => (
+                                  <option key={n} value={n}>{n.toLocaleString()} paths</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+
+                        {mcComputing ? (
+                          <div className="flex items-center justify-center py-16 gap-3 text-[#8A99B3] text-sm">
+                            <span className="w-5 h-5 border-2 border-[#2F80ED]/30 border-t-[#2F80ED] rounded-full animate-spin" />
+                            Running {mcSims.toLocaleString()} simulations…
+                          </div>
+                        ) : mcData ? (
+                          <>
+                            <MonteCarloChart mc={mcData} currentPrice={fundamentals.price} />
+                            {/* Summary stats */}
+                            {(() => {
+                              const last = mcData.percentiles[mcData.percentiles.length - 1]
+                              const cp = fundamentals.price
+                              const fmtChg = (p: number) => {
+                                const pct = (p / cp - 1) * 100
+                                return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+                              }
+                              return (
+                                <div className="mt-4 pt-4 border-t border-[#1E2D4A]">
+                                  <p className="text-xs text-[#8A99B3] mb-3">
+                                    After <span className="text-[#F0F4FF] font-semibold">{mcData.horizon} trading days</span>, based on <span className="text-[#F0F4FF] font-semibold">{mcSims.toLocaleString()} simulations</span>:
+                                  </p>
+                                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                                    {[
+                                      { label: 'Pessimistic (P10)',  val: last.p10, color: '#FF4D4D' },
+                                      { label: 'Below median (P25)', val: last.p25, color: '#FF6B6B' },
+                                      { label: 'Median (P50)',       val: last.p50, color: '#F0F4FF' },
+                                      { label: 'Above median (P75)', val: last.p75, color: '#4FA3FF' },
+                                      { label: 'Optimistic (P90)',   val: last.p90, color: '#00C896' },
+                                    ].map(s => (
+                                      <div key={s.label} className="bg-[#0F1729] border border-[#1E2D4A] rounded-[4px] p-3 text-center">
+                                        <p className="text-[9px] text-[#8A99B3] mb-1">{s.label}</p>
+                                        <p className="text-sm font-bold" style={{ color: s.color, fontFamily: 'var(--font-syne)' }}>
+                                          ${s.val.toFixed(2)}
+                                        </p>
+                                        <p className="text-[10px] mt-0.5" style={{ color: s.color }}>{fmtChg(s.val)}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <p className="text-[11px] text-[#8A99B3] mt-3">
+                                    <span className="text-[#F0F4FF]">50% probability</span> price lands between{' '}
+                                    <span style={{ color: '#4FA3FF' }}>${last.p25.toFixed(2)}</span> and{' '}
+                                    <span style={{ color: '#4FA3FF' }}>${last.p75.toFixed(2)}</span> in {mcData.horizon} trading days.
+                                    This is an educational simulation based on historical price behavior — not a prediction.
+                                  </p>
+                                </div>
+                              )
+                            })()}
+                          </>
+                        ) : (
+                          <p className="text-[#8A99B3] text-sm py-6 text-center">Not enough historical data to run simulation.</p>
+                        )}
                       </div>
                     )}
                   </div>

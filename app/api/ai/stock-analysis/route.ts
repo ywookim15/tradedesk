@@ -286,13 +286,57 @@ function formatMetricValue(
   }
 }
 
-function extractJSON(raw: string): string {
-  let str = raw.trim()
-  str = str.replace(/^```(?:json)?\s*/im, '').replace(/\n?```\s*$/m, '').trim()
-  const start = str.indexOf('{')
-  const end = str.lastIndexOf('}')
-  if (start !== -1 && end > start) return str.slice(start, end + 1)
-  return str
+type VerdictParsed = {
+  verdict: 'BUY' | 'WAIT' | 'AVOID'
+  confidence: number
+  summary: string
+  fundamentalsScore: number
+  technicalsScore: number
+  regimeScore: number
+}
+
+function safeParseVerdict(raw: string): VerdictParsed | null {
+  // Strip all markdown code fences
+  const clean = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim()
+
+  // Strategy 1: direct JSON parse of the first {...} block
+  const start = clean.indexOf('{')
+  const end   = clean.lastIndexOf('}')
+  if (start !== -1 && end > start) {
+    try {
+      const obj = JSON.parse(clean.slice(start, end + 1))
+      if (['BUY', 'WAIT', 'AVOID'].includes(obj.verdict) && typeof obj.confidence === 'number') {
+        return {
+          verdict:           obj.verdict,
+          confidence:        Math.round(obj.confidence),
+          summary:           typeof obj.summary === 'string' ? obj.summary : '',
+          fundamentalsScore: typeof obj.fundamentalsScore === 'number' ? Math.round(obj.fundamentalsScore) : 5,
+          technicalsScore:   typeof obj.technicalsScore   === 'number' ? Math.round(obj.technicalsScore)   : 5,
+          regimeScore:       typeof obj.regimeScore       === 'number' ? Math.round(obj.regimeScore)       : 5,
+        }
+      }
+    } catch { /* fall through */ }
+  }
+
+  // Strategy 2: extract each field individually via regex — survives unescaped chars in summary
+  const verdictM    = clean.match(/"verdict"\s*:\s*"(BUY|WAIT|AVOID)"/)
+  const verdict     = verdictM?.[1] as 'BUY' | 'WAIT' | 'AVOID' | undefined
+  if (!verdict) return null
+
+  const numField = (key: string, def: number) => {
+    const m = clean.match(new RegExp(`"${key}"\\s*:\\s*(\\d+(?:\\.\\d+)?)`))
+    return m ? Math.round(parseFloat(m[1])) : def
+  }
+  const summaryM = clean.match(/"summary"\s*:\s*"([^"]{0,800})"/)
+
+  return {
+    verdict,
+    confidence:        numField('confidence', 60),
+    summary:           summaryM ? summaryM[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : 'Analysis complete — see detailed metrics below.',
+    fundamentalsScore: numField('fundamentalsScore', 5),
+    technicalsScore:   numField('technicalsScore',   5),
+    regimeScore:       numField('regimeScore',        5),
+  }
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────────
@@ -386,6 +430,15 @@ export async function POST(req: NextRequest) {
       : { label: 'Choppy' as const, confidence: 50, daysInRegime: 0 }
 
     const monteCarlo = closes.length >= 20 ? runMonteCarlo(closes) : null
+
+    // Expose GBM params so client can re-run Monte Carlo with different horizon/sims
+    const monteCarloParams = closes.length >= 20 ? (() => {
+      const lr = closes.slice(1).map((c, i) => Math.log(c / closes[i]))
+      const mu = lr.reduce((a, b) => a + b, 0) / lr.length
+      const variance = lr.reduce((a, b) => a + (b - mu) ** 2, 0) / lr.length
+      const sigma = Math.sqrt(variance)
+      return { mu, sigma, drift: mu - 0.5 * variance, currentPrice: closes[closes.length - 1] }
+    })() : null
 
     // ── 6. Watchlist & journal context ───────────────────────────────────────
     const [watchRes, journalRes] = await Promise.allSettled([
@@ -528,26 +581,13 @@ Output a raw JSON object only — no markdown, no backticks, no code fences, no 
     }
 
     // ── 10. Parse JSON verdict ───────────────────────────────────────────────
-    let parsed: {
-      verdict: 'BUY' | 'WAIT' | 'AVOID'
-      confidence: number
-      summary: string
-      fundamentalsScore: number
-      technicalsScore: number
-      regimeScore: number
-    }
-    try {
-      const jsonStr = extractJSON(rawResponse)
-      parsed = JSON.parse(jsonStr)
-      if (!['BUY', 'WAIT', 'AVOID'].includes(parsed.verdict)) throw new Error('Bad verdict')
-      if (typeof parsed.summary !== 'string') throw new Error('Bad summary')
-    } catch {
-      const up = rawResponse.toUpperCase()
-      const verdict: 'BUY' | 'WAIT' | 'AVOID' = up.includes('AVOID') ? 'AVOID' : up.includes('BUY') ? 'BUY' : 'WAIT'
-      // Try to recover summary from raw text
-      const sumMatch = rawResponse.match(/"summary"\s*:\s*"([^"]{0,600})"/)
-      const summary = sumMatch ? sumMatch[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : 'Analysis complete — see detailed metrics below for the full breakdown.'
-      parsed = { verdict, confidence: 60, summary, fundamentalsScore: 5, technicalsScore: 5, regimeScore: 5 }
+    const parsedOrNull = safeParseVerdict(rawResponse)
+    const parsed: VerdictParsed = parsedOrNull ?? {
+      verdict: rawResponse.toUpperCase().includes('AVOID') ? 'AVOID'
+        : rawResponse.toUpperCase().includes('BUY') ? 'BUY' : 'WAIT',
+      confidence: 60,
+      summary: 'Analysis complete — see the detailed metrics below for the full breakdown.',
+      fundamentalsScore: 5, technicalsScore: 5, regimeScore: 5,
     }
 
     // ── 11. Increment counter ────────────────────────────────────────────────
@@ -560,6 +600,7 @@ Output a raw JSON object only — no markdown, no backticks, no code fences, no 
       regime: { label: regime.label, confidence: regime.confidence, daysInRegime: regime.daysInRegime },
       metrics: metricResults,
       monteCarlo,
+      monteCarloParams,
       queriesUsed: queriesUsed + 1,
       queriesLimit: isPro ? null : FREE_DAILY_LIMIT,
     })
