@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Mic, MicOff, Send, Volume2, VolumeX, Trash2, Zap, Brain, Radio } from 'lucide-react'
+import { Mic, MicOff, Volume2, VolumeX, Trash2, Zap, Brain, Radio } from 'lucide-react'
 import type { ChatMessage, AssistantStatus } from '@/types'
 
 // ── Web Speech API type shims ─────────────────────────────────────────────────
@@ -48,7 +48,7 @@ const STATUS_META: Record<AssistantStatus, { label: string; bg: string; glow: st
 const WELCOME: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content: `Hey! I'm your TradeDesk AI assistant. Enable "Always Listening" and say "Hey buddy" to activate me hands-free, or just type your question below. I'll help you understand markets, setups, and trading concepts — always educational, never financial advice.`,
+  content: `Hey! I'm your TradeDesk AI assistant. Enable "Always Listening" and say "Hey buddy" to activate me hands-free, or tap the mic button to speak directly. I'll give you real-time market data, technical reads, and trading analysis on demand.`,
   timestamp: new Date(),
 }
 
@@ -58,7 +58,6 @@ interface Props { isPro: boolean; queriesUsed: number; userName: string }
 export default function AssistantClient({ isPro, queriesUsed: initQ, userName }: Props) {
   const [status,       setStatus]       = useState<AssistantStatus>('idle')
   const [messages,     setMessages]     = useState<ChatMessage[]>([WELCOME])
-  const [input,        setInput]        = useState('')
   const [alwaysOn,     setAlwaysOn]     = useState(false)
   const [transcript,   setTranscript]   = useState('')
   const [queriesUsed,  setQueriesUsed]  = useState(initQ)
@@ -80,6 +79,7 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
   const sendMsgRef   = useRef<(t: string) => void>(() => {})
   const isMounted    = useRef(true)
   const bottomRef    = useRef<HTMLDivElement>(null)
+  const chatRef      = useRef<HTMLDivElement>(null)
 
   // Sync refs
   useEffect(() => { messagesRef.current = messages    }, [messages])
@@ -88,8 +88,11 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
   useEffect(() => { voiceOutRef.current = voiceOut    }, [voiceOut])
   useEffect(() => { queriesRef.current  = queriesUsed }, [queriesUsed])
 
-  // Auto-scroll to newest message
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, transcript])
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
+  }, [messages, transcript])
+
 
   // Cleanup
   useEffect(() => {
@@ -144,7 +147,6 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
 
     if (!isMounted.current) return
     setMessages(prev => [...prev, { id: uid(), role: 'user', content: trimmed, timestamp: new Date() }])
-    setInput('')
     setTranscript('')
     setStatus('thinking')
 
@@ -309,11 +311,6 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
     setMessages([WELCOME]); setLimitReached(false); setTranscript('')
   }, [])
 
-  const handleSubmit = useCallback((e: React.FormEvent) => {
-    e.preventDefault()
-    if (input.trim()) { sendMessage(input); setInput('') }
-  }, [input, sendMessage])
-
   // ── Derived ────────────────────────────────────────────────────────────────
   const meta       = STATUS_META[status]
   const isAnimated = status === 'listening' || status === 'speaking'
@@ -331,8 +328,8 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
           </h1>
           <p className="text-xs text-[#8A99B3] mt-0.5">
             {noSpeech
-              ? 'Voice unavailable in this browser — type your questions below'
-              : `Hey ${userName} · Say "Hey buddy" or type below`}
+              ? 'Voice not supported in this browser — try Chrome or Edge'
+              : `Hey ${userName} · Say "Hey buddy" or tap the mic`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -458,7 +455,7 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
         </aside>
 
         {/* ── Chat panel ────────────────────────────────────────────────────── */}
-        <section className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 flex flex-col gap-3">
+        <section ref={chatRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 flex flex-col gap-3">
 
           {messages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-up`}>
@@ -503,6 +500,15 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
             </div>
           )}
 
+          {/* Live transcript bubble */}
+          {status === 'listening' && transcript && (
+            <div className="flex justify-end animate-fade-up">
+              <div className="max-w-[85%] sm:max-w-[75%] px-4 py-3 bg-[#2F80ED]/20 border border-[#2F80ED]/40 text-[#F0F4FF] rounded-[6px] rounded-br-none italic text-sm">
+                {transcript}
+              </div>
+            </div>
+          )}
+
           {/* Daily limit card */}
           {limitReached && (
             <div className="mx-auto max-w-xs w-full bg-[#0F1729] border border-[#2F80ED]/40 rounded-[6px] p-5 text-center animate-fade-up">
@@ -524,78 +530,54 @@ export default function AssistantClient({ isPro, queriesUsed: initQ, userName }:
         </section>
       </div>
 
-      {/* ── Input bar ─────────────────────────────────────────────────────── */}
-      <div className="flex-shrink-0 border-t border-[#1E2D4A] px-4 sm:px-6 py-3 bg-[#0A0F1E]">
+      {/* ── Voice control bar ─────────────────────────────────────────────── */}
+      <div className="flex-shrink-0 border-t border-[#1E2D4A] px-4 sm:px-6 py-4 bg-[#0A0F1E]">
+        <div className="flex items-center justify-between gap-4">
 
-        {/* Mobile: always-on row */}
-        <div className="flex items-center justify-between mb-2 lg:hidden">
+          {/* Always-listening toggle (left) */}
           <button
             onClick={() => setAlwaysOn(v => !v)}
             disabled={noSpeech}
-            className="flex items-center gap-1.5 text-xs text-[#8A99B3] disabled:opacity-40 hover:text-[#F0F4FF] transition-colors"
+            className="flex items-center gap-2 disabled:opacity-40 group"
           >
+            <Radio size={13} className={alwaysOn ? 'text-[#2F80ED]' : 'text-[#8A99B3] group-hover:text-[#F0F4FF]'} />
+            <span className="text-xs text-[#8A99B3] group-hover:text-[#F0F4FF] transition-colors">
+              Always On {alwaysOn && <span className="text-[#00C896]">· Active</span>}
+            </span>
             {alwaysOn && <span className="w-1.5 h-1.5 rounded-full bg-[#00C896] animate-pulse" />}
-            <Radio size={11} />
-            Always Listening {alwaysOn ? 'ON' : 'OFF'}
           </button>
-          {!isPro && (
-            <span className="text-xs text-[#8A99B3]">{queriesUsed}/{FREE_LIMIT}</span>
-          )}
-        </div>
 
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          {/* Mic button */}
+          {/* Central mic button */}
           <button
-            type="button"
             onClick={handleMicClick}
             disabled={noSpeech || status === 'thinking'}
-            title={status === 'listening' ? 'Stop listening' : 'Click to speak'}
-            className={`flex-shrink-0 w-10 h-10 rounded-[4px] flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            title={status === 'listening' ? 'Stop listening' : 'Tap to speak'}
+            className={`w-14 h-14 rounded-full flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 ${
               status === 'listening'
-                ? 'bg-[#00C896] text-white shadow-[0_0_16px_rgba(0,200,150,0.5)]'
-                : 'bg-[#0F1729] border border-[#1E2D4A] text-[#8A99B3] hover:border-[#2F80ED] hover:text-[#2F80ED]'
+                ? 'bg-[#00C896] text-white shadow-[0_0_24px_rgba(0,200,150,0.6)]'
+                : status === 'speaking'
+                ? 'bg-[#4FA3FF]/20 border-2 border-[#4FA3FF] text-[#4FA3FF]'
+                : 'bg-[#0F1729] border-2 border-[#1E2D4A] text-[#8A99B3] hover:border-[#2F80ED] hover:text-[#2F80ED]'
             }`}
           >
-            {status === 'listening' ? <MicOff size={16} /> : <Mic size={16} />}
+            {status === 'listening' ? <MicOff size={22} /> : <Mic size={22} />}
           </button>
 
-          {/* Text input — shows live transcript while listening */}
-          <input
-            type="text"
-            value={status === 'listening' && transcript ? transcript : input}
-            onChange={e => { if (status !== 'listening') setInput(e.target.value) }}
-            readOnly={status === 'listening'}
-            disabled={status === 'thinking'}
-            placeholder={
-              status === 'listening' ? 'Listening…'  :
-              status === 'thinking'  ? 'Thinking…'   :
-              status === 'speaking'  ? 'Speaking…'   :
-              noSpeech ? 'Voice not supported — type your question here' :
-              'Ask about markets, stocks, indicators, strategies…'
-            }
-            className="flex-1 bg-[#0F1729] border border-[#1E2D4A] focus:border-[#2F80ED] text-[#F0F4FF] placeholder-[#8A99B3] text-sm px-4 py-2.5 rounded-[4px] outline-none transition-colors disabled:opacity-60 read-only:opacity-80"
-          />
-
-          {/* Stop button when speaking */}
-          {status === 'speaking' && (
-            <button
-              type="button"
-              onClick={stopAction}
-              className="flex-shrink-0 px-3 h-10 bg-[#FF4D4D]/10 border border-[#FF4D4D]/30 text-[#FF4D4D] text-xs rounded-[4px] hover:bg-[#FF4D4D]/20 transition-colors font-medium whitespace-nowrap"
-            >
-              Stop
-            </button>
-          )}
-
-          {/* Send */}
-          <button
-            type="submit"
-            disabled={!input.trim() || status === 'thinking' || status === 'listening'}
-            className="flex-shrink-0 w-10 h-10 bg-[#2F80ED] hover:bg-[#4FA3FF] disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-[4px] flex items-center justify-center transition-colors"
-          >
-            <Send size={14} />
-          </button>
-        </form>
+          {/* Right: stop speaking / query count */}
+          <div className="flex items-center gap-3">
+            {status === 'speaking' && (
+              <button
+                onClick={stopAction}
+                className="text-xs px-3 py-1.5 bg-[#FF4D4D]/10 border border-[#FF4D4D]/30 text-[#FF4D4D] rounded-[4px] hover:bg-[#FF4D4D]/20 transition-colors font-medium"
+              >
+                Stop
+              </button>
+            )}
+            {!isPro && (
+              <span className="text-xs text-[#8A99B3]">{queriesUsed}/{FREE_LIMIT}</span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )

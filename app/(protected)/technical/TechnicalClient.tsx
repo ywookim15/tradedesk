@@ -91,18 +91,18 @@ function calcRSI(closes: number[], n = 14): (number | null)[] {
   return out
 }
 
-function calcMACD(closes: number[]) {
-  const e12 = ema(closes, 12)
-  const e26 = ema(closes, 26)
+function calcMACD(closes: number[], fast = 12, slow = 26, signal = 9) {
+  const eFast = ema(closes, fast)
+  const eSlow = ema(closes, slow)
   const macdLine = closes.map((_, i) =>
-    e12[i] != null && e26[i] != null ? e12[i]! - e26[i]! : null,
+    eFast[i] != null && eSlow[i] != null ? eFast[i]! - eSlow[i]! : null,
   )
   const vi = macdLine.findIndex((v) => v != null)
   if (vi < 0) {
     const nullArr = closes.map(() => null as number | null)
     return { macdLine: nullArr, signalLine: nullArr, histogram: nullArr }
   }
-  const sigFull = ema(macdLine.slice(vi) as number[], 9)
+  const sigFull = ema(macdLine.slice(vi) as number[], signal)
   const signalLine: (number | null)[] = [...Array(vi).fill(null), ...sigFull]
   const histogram = closes.map((_, i) =>
     macdLine[i] != null && signalLine[i] != null ? macdLine[i]! - signalLine[i]! : null,
@@ -137,12 +137,13 @@ function normalRand() {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
 }
 
-function calcMonteCarlo(closes: number[], days = 90, sims = 300) {
-  if (closes.length < 10) return null
-  const rets = closes.slice(1).map((c, i) => Math.log(c / closes[i]))
+function calcMonteCarlo(closes: number[], days = 90, sims = 300, histBars = 0) {
+  const src = histBars > 0 ? closes.slice(-histBars) : closes
+  if (src.length < 10) return null
+  const rets = src.slice(1).map((c, i) => Math.log(c / src[i]))
   const mu = rets.reduce((a, b) => a + b, 0) / rets.length
   const sig = Math.sqrt(rets.reduce((a, b) => a + (b - mu) ** 2, 0) / rets.length)
-  const last = closes[closes.length - 1]
+  const last = src[src.length - 1]
   const finals: number[] = []
   for (let s = 0; s < sims; s++) {
     let p = last
@@ -155,6 +156,7 @@ function calcMonteCarlo(closes: number[], days = 90, sims = 300) {
     current: last,
     p10: pct(10), p25: pct(25), p50: pct(50), p75: pct(75), p90: pct(90),
     probAbove: ((finals.filter((p) => p > last).length / sims) * 100).toFixed(0),
+    sims, days, histBars: histBars || src.length,
   }
 }
 
@@ -232,6 +234,25 @@ export default function TechnicalClient() {
   const [analysisLoading,  setAnalysisLoading]  = useState(false)
   const [aiLoading,        setAiLoading]        = useState(false)
   const [error,            setError]            = useState<string | null>(null)
+
+  // Per-analysis configurable parameters
+  const [params, setParams] = useState({
+    rsiPeriod:      14,
+    macdFast:       12,
+    macdSlow:       26,
+    macdSignal:     9,
+    zWindow:        20,
+    meanrevPeriod:  20,
+    sharpRfr:       5,    // % risk-free rate
+    volBuckets:     10,
+    mcSims:         300,
+    mcDays:         90,
+    mcHistBars:     0,    // 0 = use all available
+  })
+
+  const setParam = useCallback(<K extends keyof typeof params>(key: K, val: number) => {
+    setParams(p => ({ ...p, [key]: val }))
+  }, [])
 
   const containerRef    = useRef<HTMLDivElement>(null)
   const chartRef        = useRef<ReturnType<typeof createChart> | null>(null)
@@ -458,10 +479,11 @@ export default function TechnicalClient() {
 
   // ── Run analysis ───────────────────────────────────────────────────────────
 
-  const runAnalysis = useCallback(async (type: AnalysisKey) => {
+  const runAnalysis = useCallback(async (type: AnalysisKey, overrideParams?: typeof params) => {
     if (!chartData.length) return
     setActiveAnalysis(type); setAnalysisLoading(true); setAnalysisData(null)
 
+    const p = overrideParams ?? params
     const closes = chartData.map((d) => d.close)
     const n = closes.length
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -469,7 +491,7 @@ export default function TechnicalClient() {
 
     switch (type) {
       case 'macd': {
-        const { macdLine, signalLine, histogram } = calcMACD(closes)
+        const { macdLine, signalLine, histogram } = calcMACD(closes, p.macdFast, p.macdSlow, p.macdSignal)
         const last = n - 1
         result = {
           macd: macdLine[last], signal: signalLine[last], histogram: histogram[last],
@@ -478,21 +500,22 @@ export default function TechnicalClient() {
             (histogram[last] ?? 0) > 0 && (histogram[last - 1] ?? 0) <= 0 ? 'bullish'
             : (histogram[last] ?? 0) < 0 && (histogram[last - 1] ?? 0) >= 0 ? 'bearish'
             : 'none',
+          fast: p.macdFast, slow: p.macdSlow, signalPeriod: p.macdSignal,
         }; break
       }
       case 'rsi': {
-        const vals = calcRSI(closes)
+        const vals = calcRSI(closes, p.rsiPeriod)
         const cur  = vals[n - 1] ?? 50
-        result = { current: cur, zone: cur > 70 ? 'overbought' : cur < 30 ? 'oversold' : 'neutral' }; break
+        result = { current: cur, zone: cur > 70 ? 'overbought' : cur < 30 ? 'oversold' : 'neutral', period: p.rsiPeriod }; break
       }
       case 'zscore': {
-        result = { current: calcZScore(closes)[n - 1] }; break
+        result = { current: calcZScore(closes, p.zWindow)[n - 1], window: p.zWindow }; break
       }
       case 'meanrev': {
-        const s20  = sma(closes, 20)
+        const smaN = sma(closes, p.meanrevPeriod)
         const last = closes[n - 1]
-        const m    = s20[n - 1]
-        result = { price: last, sma20: m, deviation: m != null ? ((last - m) / m) * 100 : 0 }; break
+        const m    = smaN[n - 1]
+        result = { price: last, sma: m, period: p.meanrevPeriod, deviation: m != null ? ((last - m) / m) * 100 : 0 }; break
       }
       case 'momentum': {
         const r3m  = n >= 63  ? ((closes[n-1] - closes[n-63])  / closes[n-63])  * 100 : null
@@ -502,13 +525,13 @@ export default function TechnicalClient() {
         result = { r3m, r6m, r12m, score }; break
       }
       case 'sharpe': {
-        result = { ratio: calcSharpe(closes) }; break
+        result = { ratio: calcSharpe(closes, p.sharpRfr / 100), rfr: p.sharpRfr }; break
       }
       case 'montecarlo': {
-        result = calcMonteCarlo(closes); break
+        result = calcMonteCarlo(closes, p.mcDays, p.mcSims, p.mcHistBars); break
       }
       case 'volprofile': {
-        const buckets = 10
+        const buckets = p.volBuckets
         const high = Math.max(...chartData.map((d) => d.high))
         const low  = Math.min(...chartData.map((d) => d.low))
         const step = (high - low) / buckets
@@ -521,7 +544,7 @@ export default function TechnicalClient() {
           profile[idx].volume += d.volume
         })
         const maxVol = Math.max(...profile.map((p) => p.volume))
-        result = { profile: profile.reverse(), maxVol }; break
+        result = { profile: profile.reverse(), maxVol, buckets }; break
       }
       case 'rsvsspx': {
         try {
@@ -541,7 +564,7 @@ export default function TechnicalClient() {
 
     setAnalysisData(result)
     setAnalysisLoading(false)
-  }, [chartData, period])
+  }, [chartData, period, params])
 
   // ── AI Analysis ────────────────────────────────────────────────────────────
 
@@ -582,6 +605,16 @@ export default function TechnicalClient() {
     }
   }, [chartData, ticker, period, activeIndicators])
 
+  // Re-run analysis when params change while a panel is open
+  const prevAnalysisRef = useRef<AnalysisKey | null>(null)
+  useEffect(() => {
+    if (activeAnalysis && activeAnalysis === prevAnalysisRef.current && chartData.length) {
+      runAnalysis(activeAnalysis)
+    }
+    prevAnalysisRef.current = activeAnalysis
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
+
   // ── Analysis panel ─────────────────────────────────────────────────────────
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -592,6 +625,11 @@ export default function TechnicalClient() {
         const bull = d.crossover === 'bullish', bear = d.crossover === 'bearish'
         return (
           <div>
+            <ParamRow>
+              <ParamSlider label="Fast EMA" value={params.macdFast}   min={3}  max={30}  onChange={v => setParam('macdFast',   v)} />
+              <ParamSlider label="Slow EMA" value={params.macdSlow}   min={10} max={60}  onChange={v => setParam('macdSlow',   v)} />
+              <ParamSlider label="Signal"   value={params.macdSignal} min={3}  max={20}  onChange={v => setParam('macdSignal', v)} />
+            </ParamRow>
             <div className="grid grid-cols-3 gap-3 mb-4">
               <Stat label="MACD"      value={d.macd?.toFixed(4)      ?? 'N/A'} />
               <Stat label="Signal"    value={d.signal?.toFixed(4)    ?? 'N/A'} />
@@ -605,7 +643,7 @@ export default function TechnicalClient() {
             )}
             <MiniHistogram data={d.histHist} />
             <p className="text-[#8A99B3] text-xs mt-3 leading-relaxed">
-              MACD above the signal line = bullish momentum building. Below = bearish. Histogram crossovers at zero signal potential trend changes. Divergences between price and MACD are early warning signals.
+              MACD above the signal line = bullish momentum building. Below = bearish. Histogram crossovers at zero signal potential trend changes.
             </p>
           </div>
         )
@@ -615,6 +653,9 @@ export default function TechnicalClient() {
         const col = v > 70 ? '#FF4D4D' : v < 30 ? '#00C896' : '#F0F4FF'
         return (
           <div>
+            <ParamRow>
+              <ParamSlider label="Period" value={params.rsiPeriod} min={5} max={30} onChange={v => setParam('rsiPeriod', v)} />
+            </ParamRow>
             <div className="flex items-end gap-4 mb-4">
               <span className="text-5xl font-bold" style={{ fontFamily: 'var(--font-syne)', color: col }}>
                 {v.toFixed(1)}
@@ -623,7 +664,7 @@ export default function TechnicalClient() {
                 <p className="text-sm font-semibold" style={{ color: col }}>
                   {v > 70 ? 'Overbought' : v < 30 ? 'Oversold' : 'Neutral Zone'}
                 </p>
-                <p className="text-[#8A99B3] text-xs">RSI (14-period)</p>
+                <p className="text-[#8A99B3] text-xs">RSI ({d.period}-period)</p>
               </div>
             </div>
             <div className="w-full h-2 bg-[#1E2D4A] rounded-full overflow-hidden mb-4">
@@ -634,7 +675,7 @@ export default function TechnicalClient() {
               }} />
             </div>
             <p className="text-[#8A99B3] text-xs leading-relaxed">
-              RSI &gt; 70: Asset may be overbought — rally is extended, potential pullback or consolidation. RSI &lt; 30: Oversold — selling pressure may be exhausted, watch for a bounce. Neither reading is a direct signal to act; context (trend, volume, sector) matters.
+              RSI &gt; 70: overbought — extended rally, watch for pullback. RSI &lt; 30: oversold — selling may be exhausted. Context (trend, volume, sector) always matters.
             </p>
           </div>
         )
@@ -644,6 +685,9 @@ export default function TechnicalClient() {
         const abs = Math.abs(v)
         return (
           <div>
+            <ParamRow>
+              <ParamSlider label="Window" value={params.zWindow} min={10} max={60} onChange={v => setParam('zWindow', v)} />
+            </ParamRow>
             <div className="flex items-end gap-3 mb-3">
               <span className="text-5xl font-bold" style={{
                 fontFamily: 'var(--font-syne)',
@@ -651,14 +695,14 @@ export default function TechnicalClient() {
               }}>
                 {v?.toFixed(2) ?? 'N/A'}
               </span>
-              <p className="text-[#8A99B3] text-sm pb-1">std deviations from 20-day mean</p>
+              <p className="text-[#8A99B3] text-sm pb-1">std deviations from {d.window}-day mean</p>
             </div>
             <p className="text-[#8A99B3] text-xs leading-relaxed">
               {abs > 2
-                ? `Price is ${abs.toFixed(1)}σ from its mean — statistically extreme. Mean-reversion traders look for these opportunities to fade the move.`
+                ? `Price is ${abs.toFixed(1)}σ from its mean — statistically extreme. Mean-reversion traders look to fade the move.`
                 : abs > 1
-                ? `Price is moderately stretched. Not extreme yet, but worth watching for a pullback toward the mean.`
-                : 'Price is near its statistical mean — no significant deviation detected.'}
+                ? 'Price is moderately stretched. Not extreme yet, worth watching.'
+                : 'Price is near its statistical mean — no significant deviation.'}
               {' '}Z-score above +2 or below −2 occurs only ~5% of the time historically.
             </p>
           </div>
@@ -668,17 +712,20 @@ export default function TechnicalClient() {
         const dev = d.deviation ?? 0
         return (
           <div>
+            <ParamRow>
+              <ParamSlider label="SMA Period" value={params.meanrevPeriod} min={5} max={200} onChange={v => setParam('meanrevPeriod', v)} />
+            </ParamRow>
             <div className="grid grid-cols-3 gap-3 mb-4">
-              <Stat label="Current Price" value={`$${d.price?.toFixed(2) ?? 'N/A'}`} />
-              <Stat label="20-Day SMA"    value={`$${d.sma20?.toFixed(2) ?? 'N/A'}`} />
+              <Stat label="Current Price"           value={`$${d.price?.toFixed(2) ?? 'N/A'}`} />
+              <Stat label={`${d.period}-Day SMA`}   value={`$${d.sma?.toFixed(2)  ?? 'N/A'}`} />
               <Stat label="Deviation"
                 value={`${dev >= 0 ? '+' : ''}${dev?.toFixed(2)}%`}
                 color={Math.abs(dev) > 5 ? '#FF4D4D' : '#00C896'} />
             </div>
             <p className="text-[#8A99B3] text-xs leading-relaxed">
               {Math.abs(dev) > 5
-                ? `Price is ${Math.abs(dev).toFixed(1)}% ${dev > 0 ? 'above' : 'below'} the 20-day SMA — statistically stretched. Mean-reversion setups look for a snap back toward the average.`
-                : 'Price is trading close to its 20-day average — no extreme deviation. Mean-reversion traders typically wait for a larger stretch before entering.'}
+                ? `Price is ${Math.abs(dev).toFixed(1)}% ${dev > 0 ? 'above' : 'below'} the ${d.period}-day SMA — statistically stretched. Watch for a reversion to the mean.`
+                : `Price is close to its ${d.period}-day average — no extreme deviation.`}
             </p>
           </div>
         )
@@ -702,7 +749,7 @@ export default function TechnicalClient() {
               <span className="text-xs px-2 py-0.5 rounded border" style={{ borderColor: lCol, color: lCol }}>{label}</span>
             </div>
             <p className="text-[#8A99B3] text-xs leading-relaxed">
-              Momentum investing assumes that assets moving in a direction tend to continue moving that way. Positive across all three periods = strongest signal. Divergence between short and long-term returns may indicate a trend change.
+              Momentum investing assumes assets moving in a direction tend to continue. Positive across all three periods = strongest signal. Divergence between short and long-term may indicate a trend change.
             </p>
           </div>
         )
@@ -720,8 +767,8 @@ export default function TechnicalClient() {
             </div>
             <p className="text-[#8A99B3] text-xs leading-relaxed">
               {alpha > 0
-                ? `${ticker} outperformed the S&P 500 by ${alpha.toFixed(1)}% — showing positive relative strength. Relative strength leaders tend to continue outperforming during bull markets.`
-                : `${ticker} underperformed the S&P 500 by ${Math.abs(alpha).toFixed(1)}% — showing relative weakness. Consider whether sector headwinds or company-specific issues are driving this gap.`}
+                ? `${ticker} outperformed the S&P 500 by ${alpha.toFixed(1)}% — positive relative strength.`
+                : `${ticker} underperformed the S&P 500 by ${Math.abs(alpha).toFixed(1)}% — relative weakness.`}
             </p>
           </div>
         )
@@ -732,26 +779,42 @@ export default function TechnicalClient() {
         const label = r > 2 ? 'Excellent' : r > 1 ? 'Good' : r > 0 ? 'Below Average' : 'Poor'
         return (
           <div>
+            <ParamRow>
+              <ParamSlider label="Risk-Free Rate (%)" value={params.sharpRfr} min={0} max={10} step={0.5} onChange={v => setParam('sharpRfr', v)} />
+            </ParamRow>
             <div className="flex items-end gap-3 mb-3">
               <span className="text-5xl font-bold" style={{ fontFamily: 'var(--font-syne)', color: col }}>
                 {r.toFixed(2)}
               </span>
               <div className="pb-1">
                 <p className="text-sm font-semibold" style={{ color: col }}>{label}</p>
-                <p className="text-[#8A99B3] text-xs">Annualized Sharpe Ratio</p>
+                <p className="text-[#8A99B3] text-xs">Annualized Sharpe (RFR: {d.rfr}%)</p>
               </div>
             </div>
             <p className="text-[#8A99B3] text-xs leading-relaxed">
-              Sharpe Ratio measures return earned per unit of risk (vs a 5% risk-free rate). Above 1 = good risk-adjusted return. Above 2 = excellent. Negative = you&apos;d be better off in T-bills. Use it to compare strategies, not as a standalone buy/sell signal.
+              Sharpe Ratio = return per unit of risk vs the risk-free rate. Above 1 = good, above 2 = excellent. Negative = underperforming T-bills. Use to compare strategies, not as a buy/sell signal.
             </p>
           </div>
         )
       }
       case 'montecarlo': {
-        if (!d) return <p className="text-[#FF4D4D] text-sm">Insufficient data for simulation (need at least 10 data points).</p>
+        if (!d) return <p className="text-[#FF4D4D] text-sm">Insufficient data (need at least 10 data points).</p>
         return (
           <div>
-            <p className="text-[#8A99B3] text-[10px] mb-3">300 simulations · 90-day horizon · Based on historical daily return distribution</p>
+            <ParamRow>
+              <ParamSelect label="Simulations" value={params.mcSims}
+                options={[{v:100,l:'100'},{v:300,l:'300'},{v:500,l:'500'},{v:1000,l:'1,000'}]}
+                onChange={v => setParam('mcSims', v)} />
+              <ParamSelect label="Forecast"  value={params.mcDays}
+                options={[{v:30,l:'30d'},{v:60,l:'60d'},{v:90,l:'90d'},{v:180,l:'180d'},{v:365,l:'1yr'}]}
+                onChange={v => setParam('mcDays', v)} />
+              <ParamSelect label="Hist. Data" value={params.mcHistBars}
+                options={[{v:0,l:'All'},{v:30,l:'30 bars'},{v:60,l:'60 bars'},{v:126,l:'6mo'},{v:252,l:'1yr'}]}
+                onChange={v => setParam('mcHistBars', v)} />
+            </ParamRow>
+            <p className="text-[#8A99B3] text-[10px] mb-3">
+              {d.sims} simulations · {d.days}-day horizon · {d.histBars} bars of history
+            </p>
             <div className="grid grid-cols-5 gap-2 mb-4">
               {([['10th %', d.p10], ['25th %', d.p25], ['Median', d.p50], ['75th %', d.p75], ['90th %', d.p90]] as [string, number][]).map(([label, val]) => (
                 <Stat key={label} label={label} value={`$${val?.toFixed(0) ?? '—'}`}
@@ -762,18 +825,22 @@ export default function TechnicalClient() {
               {d.probAbove}% of simulations ended above today&apos;s price
             </p>
             <p className="text-[#8A99B3] text-xs leading-relaxed">
-              Monte Carlo simulates thousands of possible future price paths using historical volatility and drift. The output is a probability distribution — not a prediction. Higher volatility = wider spread between 10th and 90th percentile.
+              Monte Carlo simulates possible future price paths using historical volatility and drift. The output is a probability distribution — not a prediction.
             </p>
           </div>
         )
       }
       case 'volprofile': {
         const { profile, maxVol } = d
+        const totalVol = profile.reduce((a: number, pp: { volume: number }) => a + pp.volume, 0)
         return (
           <div>
-            <p className="text-[#8A99B3] text-xs mb-3">Price levels ranked by volume concentration:</p>
+            <ParamRow>
+              <ParamSlider label="Price Buckets" value={params.volBuckets} min={5} max={20} onChange={v => setParam('volBuckets', v)} />
+            </ParamRow>
+            <p className="text-[#8A99B3] text-xs mb-3">Price levels ranked by volume concentration ({d.buckets} buckets):</p>
             <div className="space-y-1.5">
-              {profile.slice(0, 8).map((p: { priceFrom: number; volume: number }, i: number) => (
+              {profile.slice(0, Math.min(d.buckets, 10)).map((p: { priceFrom: number; volume: number }, i: number) => (
                 <div key={i} className="flex items-center gap-2">
                   <span className="text-[10px] text-[#8A99B3] w-20 text-right shrink-0">
                     ${p.priceFrom.toFixed(2)}
@@ -785,13 +852,13 @@ export default function TechnicalClient() {
                     }} />
                   </div>
                   <span className="text-[10px] text-[#8A99B3] w-12 shrink-0">
-                    {((p.volume / profile.reduce((a: number, pp: { volume: number }) => a + pp.volume, 0)) * 100).toFixed(1)}%
+                    {((p.volume / totalVol) * 100).toFixed(1)}%
                   </span>
                 </div>
               ))}
             </div>
             <p className="text-[#8A99B3] text-xs mt-3 leading-relaxed">
-              The Point of Control (blue bar) is the price level with the most traded volume — a strong support/resistance magnet. High-volume nodes act as price anchors; low-volume zones are where price tends to move quickly.
+              The Point of Control (blue bar) is the price level with the most volume — a strong S/R magnet. High-volume nodes anchor price; low-volume zones = fast moves.
             </p>
           </div>
         )
@@ -1003,6 +1070,58 @@ function Stat({ label, value, color = '#F0F4FF' }: { label: string; value: strin
     <div className="bg-[#0A0F1E] border border-[#1E2D4A] rounded-[4px] px-3 py-2">
       <p className="text-[10px] text-[#8A99B3] mb-0.5 truncate">{label}</p>
       <p className="text-sm font-bold truncate" style={{ color }}>{value}</p>
+    </div>
+  )
+}
+
+function ParamRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap gap-4 mb-4 pb-4 border-b border-[#1E2D4A]">
+      {children}
+    </div>
+  )
+}
+
+function ParamSlider({
+  label, value, min, max, step = 1, onChange,
+}: { label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex flex-col gap-1 min-w-[120px]">
+      <div className="flex justify-between items-center">
+        <span className="text-[10px] text-[#8A99B3] uppercase tracking-wide">{label}</span>
+        <span className="text-[11px] font-semibold text-[#4FA3FF]">{value}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="w-full h-1 appearance-none bg-[#1E2D4A] rounded-full cursor-pointer accent-[#2F80ED]"
+      />
+    </div>
+  )
+}
+
+function ParamSelect({
+  label, value, options, onChange,
+}: { label: string; value: number; options: { v: number; l: string }[]; onChange: (v: number) => void }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] text-[#8A99B3] uppercase tracking-wide">{label}</span>
+      <div className="flex gap-1 flex-wrap">
+        {options.map(o => (
+          <button
+            key={o.v}
+            onClick={() => onChange(o.v)}
+            className="text-[10px] px-2 py-0.5 rounded-[3px] border transition-colors"
+            style={{
+              backgroundColor: value === o.v ? '#2F80ED1A' : 'transparent',
+              color:           value === o.v ? '#4FA3FF'   : '#8A99B3',
+              borderColor:     value === o.v ? '#2F80ED'   : '#1E2D4A',
+            }}
+          >
+            {o.l}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

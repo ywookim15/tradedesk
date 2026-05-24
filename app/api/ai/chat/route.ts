@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { geminiChatWithHistory } from '@/lib/gemini'
 import type { Content } from '@google/generative-ai'
+import YahooFinance from 'yahoo-finance2'
+const yahooFinance = new YahooFinance()
 
 export const dynamic = 'force-dynamic'
 
@@ -74,15 +76,19 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ── 5. Gemini API call ─────────────────────────────────────────────────────
+    // ── 5. Detect tickers in the message and inject live data ─────────────────
+    const enrichedMessage = await injectLiveData(message.trim())
+    console.log('[/api/ai/chat] enriched message length:', enrichedMessage.length)
+
+    // ── 6. Gemini API call ─────────────────────────────────────────────────────
     const geminiKey = process.env.GEMINI_API_KEY
     console.log('[/api/ai/chat] GEMINI_API_KEY present:', !!geminiKey, '| key prefix:', geminiKey?.slice(0, 8) ?? 'missing')
 
-    const response = await geminiChatWithHistory(history, message.trim())
+    const response = await geminiChatWithHistory(history, enrichedMessage)
 
     console.log('[/api/ai/chat] Gemini response length:', response?.length)
 
-    // ── 6. Increment counter ───────────────────────────────────────────────────
+    // ── 7. Increment counter ───────────────────────────────────────────────────
     await supabase
       .from('profiles')
       .update({ ai_queries_today: queriesUsed + 1 } as never)
@@ -97,4 +103,35 @@ export async function POST(req: NextRequest) {
     console.error('[/api/ai/chat] CAUGHT ERROR:', err)
     return NextResponse.json({ error: 'Failed to get AI response' }, { status: 500 })
   }
+}
+
+// Detect stock tickers in the message, fetch live quotes, and prepend data context
+async function injectLiveData(message: string): Promise<string> {
+  // Match 1–5 uppercase letters that look like tickers (ignore common words)
+  const SKIP = new Set(['A', 'I', 'AT', 'IS', 'IN', 'ON', 'UP', 'BY', 'TO', 'OR', 'IF', 'IT', 'BE', 'SO', 'DO', 'GO', 'MY', 'NO', 'OK', 'US', 'AM', 'PM', 'EPS', 'RSI', 'ETF', 'IPO', 'CEO', 'CFO', 'SEC', 'FED', 'GDP', 'CPI', 'NFP', 'AI'])
+  const raw = message.match(/\b[A-Z]{1,5}\b/g) ?? []
+  const tickers = [...new Set(raw.filter(t => !SKIP.has(t)))].slice(0, 3)
+
+  if (!tickers.length) return message
+
+  const quotes = await Promise.all(
+    tickers.map(async (sym) => {
+      try {
+        const q = await yahooFinance.quote(sym) as Record<string, number | string>
+        const price  = (q.regularMarketPrice         as number)?.toFixed(2) ?? '—'
+        const chg    = (q.regularMarketChange         as number)?.toFixed(2) ?? '—'
+        const chgPct = (q.regularMarketChangePercent  as number)?.toFixed(2) ?? '—'
+        const vol    = q.regularMarketVolume as number
+        const volStr = vol ? (vol >= 1e6 ? `${(vol / 1e6).toFixed(1)}M` : `${(vol / 1e3).toFixed(0)}K`) : '—'
+        return `${sym}: price $${price}, change ${Number(chg) >= 0 ? '+' : ''}${chg} (${Number(chgPct) >= 0 ? '+' : ''}${chgPct}%), volume ${volStr}`
+      } catch {
+        return null
+      }
+    })
+  )
+
+  const validQuotes = quotes.filter(Boolean)
+  if (!validQuotes.length) return message
+
+  return `[Live market data as of right now — ${validQuotes.join(' | ')}]\n\n${message}`
 }

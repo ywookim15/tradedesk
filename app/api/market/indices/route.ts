@@ -5,10 +5,13 @@ const yahooFinance = new YahooFinance()
 export const dynamic = 'force-dynamic'
 
 const INDICES = [
-  { symbol: '^GSPC',  name: 'S&P 500',   short: 'SPX'    },
-  { symbol: '^IXIC',  name: 'NASDAQ',     short: 'COMP'   },
-  { symbol: '^DJI',   name: 'Dow Jones',  short: 'DJI'    },
-  { symbol: '^VIX',   name: 'Volatility', short: 'VIX'    },
+  { symbol: '^GSPC',  name: 'S&P 500',          short: 'SPX'  },
+  { symbol: '^IXIC',  name: 'NASDAQ',            short: 'COMP' },
+  { symbol: '^DJI',   name: 'Dow Jones',         short: 'DJI'  },
+  { symbol: '^VIX',   name: 'Volatility',        short: 'VIX'  },
+  { symbol: 'SOXX',   name: 'Philly Semi.',      short: 'SOXX' },
+  { symbol: 'CL=F',   name: 'WTI Crude Oil',     short: 'OIL'  },
+  { symbol: 'GC=F',   name: 'Gold Futures',      short: 'GOLD' },
 ]
 
 function toDateStr(d: Date) {

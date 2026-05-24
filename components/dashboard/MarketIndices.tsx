@@ -105,7 +105,7 @@ function IndexCard({ data, delay }: { data: IndexData; delay: number }) {
         className="text-2xl font-bold text-[#F0F4FF] mb-1"
         style={{ fontFamily: 'var(--font-syne)' }}
       >
-        {data.symbol === '^VIX'
+        {['^VIX', 'CL=F'].includes(data.symbol)
           ? animatedValue.toFixed(2)
           : formatNumber(animatedValue, 2)}
       </p>
@@ -146,14 +146,14 @@ export default function MarketIndices() {
 
   if (!data) {
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        {[0, 1, 2, 3].map((i) => <Skeleton key={i} />)}
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
+        {[0, 1, 2, 3, 4, 5, 6].map((i) => <Skeleton key={i} />)}
       </div>
     )
   }
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
       {data.map((idx, i) => (
         <IndexCard key={idx.symbol} data={idx} delay={i * 80} />
       ))}
