@@ -309,20 +309,19 @@ function formatMetricValue(
   }
 }
 
+// ── Qualitative verdict (Gemini only provides verdict + confidence + summary) ──
+
 type VerdictParsed = {
   verdict: 'BUY' | 'WAIT' | 'AVOID'
   confidence: number
   summary: string
-  fundamentalsScore: number
-  technicalsScore: number
-  regimeScore: number
 }
 
 function safeParseVerdict(raw: string): VerdictParsed | null {
-  // Strip all markdown code fences
+  // Strip markdown fences
   const clean = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim()
 
-  // Strategy 1: direct JSON parse of the first {...} block
+  // Strategy 1: direct JSON.parse of the first {...} block
   const start = clean.indexOf('{')
   const end   = clean.lastIndexOf('}')
   if (start !== -1 && end > start) {
@@ -330,20 +329,17 @@ function safeParseVerdict(raw: string): VerdictParsed | null {
       const obj = JSON.parse(clean.slice(start, end + 1))
       if (['BUY', 'WAIT', 'AVOID'].includes(obj.verdict) && typeof obj.confidence === 'number') {
         return {
-          verdict:           obj.verdict,
-          confidence:        Math.round(obj.confidence),
-          summary:           typeof obj.summary === 'string' ? obj.summary : '',
-          fundamentalsScore: typeof obj.fundamentalsScore === 'number' ? Math.round(obj.fundamentalsScore) : 5,
-          technicalsScore:   typeof obj.technicalsScore   === 'number' ? Math.round(obj.technicalsScore)   : 5,
-          regimeScore:       typeof obj.regimeScore       === 'number' ? Math.round(obj.regimeScore)       : 5,
+          verdict:    obj.verdict,
+          confidence: Math.min(99, Math.max(1, Math.round(obj.confidence))),
+          summary:    typeof obj.summary === 'string' ? obj.summary : '',
         }
       }
-    } catch { /* fall through */ }
+    } catch { /* fall through to regex strategy */ }
   }
 
-  // Strategy 2: extract each field individually via regex — survives unescaped chars in summary
-  const verdictM    = clean.match(/"verdict"\s*:\s*"(BUY|WAIT|AVOID)"/)
-  const verdict     = verdictM?.[1] as 'BUY' | 'WAIT' | 'AVOID' | undefined
+  // Strategy 2: per-field regex — survives unescaped characters in summary text
+  const verdictM = clean.match(/"verdict"\s*:\s*"(BUY|WAIT|AVOID)"/)
+  const verdict  = verdictM?.[1] as 'BUY' | 'WAIT' | 'AVOID' | undefined
   if (!verdict) return null
 
   const numField = (key: string, def: number) => {
@@ -354,11 +350,105 @@ function safeParseVerdict(raw: string): VerdictParsed | null {
 
   return {
     verdict,
-    confidence:        numField('confidence', 60),
-    summary:           summaryM ? summaryM[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : 'Analysis complete — see detailed metrics below.',
-    fundamentalsScore: numField('fundamentalsScore', 5),
-    technicalsScore:   numField('technicalsScore',   5),
-    regimeScore:       numField('regimeScore',        5),
+    confidence: Math.min(99, Math.max(1, numField('confidence', 60))),
+    summary:    summaryM ? summaryM[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : '',
+  }
+}
+
+// ── Deterministic scorecard ────────────────────────────────────────────────────
+//
+// Each metric in METRIC_DEFS casts a vote via addSig().
+// Scores are computed purely from signal tallies — never relying on Gemini for numbers.
+// Gemini is used only for the qualitative verdict, confidence, and summary text.
+
+type Tally = { bullish: number; neutral: number; bearish: number }
+
+function addSig(tally: Tally, signal: 'bullish' | 'neutral' | 'bearish'): void {
+  if (signal === 'bullish')      tally.bullish++
+  else if (signal === 'bearish') tally.bearish++
+  else                           tally.neutral++
+}
+
+/**
+ * Convert a signal tally to a 0–10 score.
+ * all-bullish → 10 | all-neutral → 5 | all-bearish → 0
+ * Mixed signals land proportionally between those poles.
+ */
+function tallyToScore(t: Tally): number {
+  const total = t.bullish + t.neutral + t.bearish
+  if (total === 0) return 5
+  const raw = 5 + ((t.bullish - t.bearish) / total) * 5
+  return Math.min(10, Math.max(0, Math.round(raw)))
+}
+
+type Scorecard = {
+  fundamentalsScore: number
+  technicalsScore: number
+  regimeScore: number
+  fundTally: Tally
+  techTally: Tally
+  deterministicVerdict: 'BUY' | 'WAIT' | 'AVOID'
+  deterministicConfidence: number
+}
+
+/**
+ * Compute the full scorecard deterministically from metric signals + regime state.
+ *
+ * Regime score uses the confidence value directly (not just the binary up/down label)
+ * to produce a gradient score rather than a hard 0/5/10 snap.
+ *
+ * Weighted composite: fundamentals 40% · technicals 40% · regime 20%
+ */
+function calcScorecard(
+  metricResults: Array<{ category: string; signal: 'bullish' | 'neutral' | 'bearish' }>,
+  regimeInfo: { label: string; confidence: number },
+): Scorecard {
+  const fundTally: Tally = { bullish: 0, neutral: 0, bearish: 0 }
+  const techTally: Tally = { bullish: 0, neutral: 0, bearish: 0 }
+
+  for (const m of metricResults) {
+    if (m.category === 'fundamental') addSig(fundTally, m.signal)
+    else if (m.category === 'technical') addSig(techTally, m.signal)
+    // Regime category handled separately — one metric, so tally alone is too binary
+  }
+
+  const fundamentalsScore = tallyToScore(fundTally)
+  const technicalsScore   = tallyToScore(techTally)
+
+  // Regime: map confidence onto the 0–10 scale via the detected direction.
+  // conf range is 50–92; map that to 5–10 (up) or 5–0 (down).
+  const conf = regimeInfo.confidence  // 50–92
+  let regimeScore: number
+  if (regimeInfo.label === 'Trending Up') {
+    regimeScore = Math.round(5 + ((conf - 50) / 42) * 5)   // 50% conf → 5, 92% → 10
+  } else if (regimeInfo.label === 'Trending Down') {
+    regimeScore = Math.round(5 - ((conf - 50) / 42) * 5)   // 50% conf → 5, 92% → 0
+  } else {
+    regimeScore = 5   // Choppy regime is directionally neutral
+  }
+  regimeScore = Math.min(10, Math.max(0, regimeScore))
+
+  // Weighted composite
+  const weightedAvg = fundamentalsScore * 0.4 + technicalsScore * 0.4 + regimeScore * 0.2
+
+  const deterministicVerdict: 'BUY' | 'WAIT' | 'AVOID' =
+    weightedAvg >= 6.5 ? 'BUY' : weightedAvg <= 4.0 ? 'AVOID' : 'WAIT'
+
+  // Confidence: how far the composite is from neutral (5) minus a penalty for
+  // disagreement between the three category scores.
+  const allScores = [fundamentalsScore, technicalsScore, regimeScore]
+  const spread    = Math.max(...allScores) - Math.min(...allScores)
+  const distFromNeutral = Math.abs(weightedAvg - 5)
+  const baseConf        = 50 + distFromNeutral * 10   // 50 at neutral → up to 100
+  const spreadPenalty   = spread * 3                   // 0–27 penalty for category disagreement
+  const deterministicConfidence = Math.round(
+    Math.min(92, Math.max(45, baseConf - spreadPenalty)),
+  )
+
+  return {
+    fundamentalsScore, technicalsScore, regimeScore,
+    fundTally, techTally,
+    deterministicVerdict, deterministicConfidence,
   }
 }
 
@@ -535,13 +625,20 @@ export async function POST(req: NextRequest) {
       }
     })
 
+    // ── 7b. Compute deterministic scorecard from signal tallies ─────────────
+    const scorecard = calcScorecard(metricResults, regime)
+
     // ── 8. Build Gemini prompt ───────────────────────────────────────────────
     const periodLabel: Record<Period, string> = {
       '1mo': '1 Month', '3mo': '3 Months', '6mo': '6 Months',
       '1y': '1 Year', '2y': '2 Years', '5y': '5 Years',
     }
 
-    const prompt = `You are TradeDesk's AI stock analysis engine. Analyze the following data and deliver a structured investment verdict.
+    const { fundTally: ft, techTally: tt } = scorecard
+    const fundSummary = `${ft.bullish} bullish · ${ft.neutral} neutral · ${ft.bearish} bearish (${ft.bullish + ft.neutral + ft.bearish} indicators)`
+    const techSummary = `${tt.bullish} bullish · ${tt.neutral} neutral · ${tt.bearish} bearish (${tt.bullish + tt.neutral + tt.bearish} indicators)`
+
+    const prompt = `You are TradeDesk's AI stock analysis engine. Review the data below and deliver a concise investment verdict.
 
 STOCK: ${symbol} — ${fund.name}
 SECTOR: ${fund.sector ?? 'N/A'} | INDUSTRY: ${fund.industry ?? 'N/A'}
@@ -557,9 +654,7 @@ ROE: ${fmt(fund.roe != null ? fund.roe * 100 : null, 1)}%
 Debt/Equity: ${fmt(fund.debtToEquity ?? null, 2)}x
 Beta: ${fmt(fund.beta ?? null, 2)}
 Market Cap: ${fmtLarge(fund.marketCap ?? null)}
-Enterprise Value: ${fmtLarge(fund.enterpriseValue ?? null)}
 52W Range: $${fmt(fund.week52Low ?? null, 2)} – $${fmt(fund.week52High ?? null, 2)}
-Dividend Yield: ${fund.dividendYield ? (fund.dividendYield * 100).toFixed(2) + '%' : 'None'}
 Analyst Consensus: ${fund.analystRating?.consensus ?? 'N/A'}${fund.analystPriceTarget ? ` | Price Target: $${fund.analystPriceTarget.toFixed(2)}` : ''}
 
 ── TECHNICALS (${periodLabel[period] ?? period}) ──
@@ -568,32 +663,29 @@ MACD Histogram: ${macdHistogram != null ? (macdHistogram >= 0 ? '+' : '') + macd
 Price vs SMA 50: ${sma50Dev != null ? (sma50Dev >= 0 ? '+' : '') + sma50Dev.toFixed(1) + '%' : 'N/A'}
 Price vs SMA 200: ${sma200Dev != null ? (sma200Dev >= 0 ? '+' : '') + sma200Dev.toFixed(1) + '%' : 'N/A'}${goldenDeathCross ? ' (' + (goldenDeathCross === 'golden' ? 'Golden Cross' : 'Death Cross') + ')' : ''}
 Bollinger Band Position: ${bbPct != null ? bbPct.toFixed(0) + 'th percentile of band' : 'N/A'}
-Volume Trend: ${volumeRatio != null ? volumeRatio.toFixed(2) + 'x 20-day avg (' + (volumeRatio > 1.2 ? 'increasing' : volumeRatio < 0.8 ? 'decreasing' : 'stable') + ')' : 'N/A'}
+Volume Trend: ${volumeRatio != null ? volumeRatio.toFixed(2) + 'x 20-day avg' : 'N/A'}
 3-Month Momentum: ${momentum3M != null ? (momentum3M >= 0 ? '+' : '') + momentum3M.toFixed(1) + '%' : 'N/A'}
 ATR(14): ${atrValue != null ? '$' + atrValue.toFixed(2) : 'N/A'}
 
-── MARKET REGIME (statistical detection) ──
-Current State: ${regime.label}
-Confidence: ${regime.confidence}%
-Duration: ~${regime.daysInRegime} trading periods
+── MARKET REGIME ──
+State: ${regime.label} · Confidence: ${regime.confidence}% · Duration: ~${regime.daysInRegime} periods
+
+── SIGNAL SCORECARD (computed from indicator tallies) ──
+Fundamentals : ${scorecard.fundamentalsScore}/10 — ${fundSummary}
+Technicals   : ${scorecard.technicalsScore}/10 — ${techSummary}
+Regime       : ${scorecard.regimeScore}/10 — ${regime.label} at ${regime.confidence}% confidence
+Composite    : ${(scorecard.fundamentalsScore * 0.4 + scorecard.technicalsScore * 0.4 + scorecard.regimeScore * 0.2).toFixed(1)}/10 → suggested ${scorecard.deterministicVerdict}
 
 ── USER CONTEXT ──
-In user's watchlist: ${inWatchlist ? 'Yes' : 'No'}
-Journal trades for ${symbol}: ${journalCount > 0 ? `${journalCount} trade(s), avg P&L per trade: $${journalAvgPnl?.toFixed(2) ?? 'N/A'}` : 'None logged'}
+Watchlist: ${inWatchlist ? 'Yes' : 'No'}
+Journal: ${journalCount > 0 ? `${journalCount} trade(s), avg P&L $${journalAvgPnl?.toFixed(2) ?? 'N/A'}` : 'None logged'}
 
 ────────────────────────────────────────────────────
 
-Instructions: Reason through each category step by step, then deliver your verdict.
+Your task: Using the scorecard and data above, write 2–3 sentences in plain English explaining the most important factors driving the verdict. You may agree with the suggested verdict or override it if the qualitative picture clearly warrants it.
 
-Step 1 — FUNDAMENTALS: Evaluate valuation (P/E vs sector), profitability, balance sheet health, analyst view.
-Step 2 — TECHNICALS: Evaluate trend direction, momentum strength, mean-reversion risk, volume conviction.
-Step 3 — REGIME: Is the current regime favorable for buying, waiting, or avoiding?
-Step 4 — VERDICT: Weigh all evidence. BUY = favorable setup with manageable risk. WAIT = mixed/neutral signals, no clear edge. AVOID = unfavorable conditions, risk outweighs reward.
-
-Score each category 0-10: fundamentals, technicals, and regime quality.
-
-Output a raw JSON object only — no markdown, no backticks, no code fences, no explanation before or after. Just the JSON object:
-{"verdict":"BUY","confidence":72,"summary":"...","fundamentalsScore":7,"technicalsScore":6,"regimeScore":7}`
+Output ONLY this JSON (no markdown, no backticks, no code fences, nothing before or after):
+{"verdict":"${scorecard.deterministicVerdict}","confidence":${scorecard.deterministicConfidence},"summary":"Replace this with your 2–3 sentence analysis."}`
 
     // ── 9. Call Gemini ───────────────────────────────────────────────────────
     let rawResponse: string
@@ -603,15 +695,16 @@ Output a raw JSON object only — no markdown, no backticks, no code fences, no 
       return NextResponse.json({ error: 'AI service temporarily unavailable' }, { status: 503 })
     }
 
-    // ── 10. Parse JSON verdict ───────────────────────────────────────────────
-    const parsedOrNull = safeParseVerdict(rawResponse)
-    const parsed: VerdictParsed = parsedOrNull ?? {
-      verdict: rawResponse.toUpperCase().includes('AVOID') ? 'AVOID'
-        : rawResponse.toUpperCase().includes('BUY') ? 'BUY' : 'WAIT',
-      confidence: 60,
-      summary: 'Analysis complete — see the detailed metrics below for the full breakdown.',
-      fundamentalsScore: 5, technicalsScore: 5, regimeScore: 5,
-    }
+    // ── 10. Parse Gemini verdict — only verdict / confidence / summary ────────
+    //   Scores always come from the deterministic scorecard, never from Gemini.
+    const geminiResult = safeParseVerdict(rawResponse)
+
+    // Gemini can override the verdict/confidence if it disagrees; scores are locked.
+    const finalVerdict    = geminiResult?.verdict    ?? scorecard.deterministicVerdict
+    const finalConfidence = geminiResult?.confidence ?? scorecard.deterministicConfidence
+    const finalSummary    = geminiResult?.summary?.trim()
+      ? geminiResult.summary
+      : 'Analysis complete — see the detailed metrics below for the full breakdown.'
 
     // ── 11. Increment counter ────────────────────────────────────────────────
     await supabase.from('profiles')
@@ -619,12 +712,23 @@ Output a raw JSON object only — no markdown, no backticks, no code fences, no 
       .eq('id', user.id)
 
     return NextResponse.json({
-      ...parsed,
-      regime: { label: regime.label, confidence: regime.confidence, daysInRegime: regime.daysInRegime, history: regime.history, distribution: regime.distribution },
-      metrics: metricResults,
+      verdict:           finalVerdict,
+      confidence:        finalConfidence,
+      summary:           finalSummary,
+      fundamentalsScore: scorecard.fundamentalsScore,
+      technicalsScore:   scorecard.technicalsScore,
+      regimeScore:       scorecard.regimeScore,
+      regime: {
+        label:        regime.label,
+        confidence:   regime.confidence,
+        daysInRegime: regime.daysInRegime,
+        history:      regime.history,
+        distribution: regime.distribution,
+      },
+      metrics:           metricResults,
       monteCarlo,
       monteCarloParams,
-      queriesUsed: queriesUsed + 1,
+      queriesUsed:  queriesUsed + 1,
       queriesLimit: isPro ? null : FREE_DAILY_LIMIT,
     })
 
