@@ -5,6 +5,7 @@ import TopMovers         from '@/components/dashboard/TopMovers'
 import SectorHeatmap     from '@/components/dashboard/SectorHeatmap'
 import WatchlistSnapshot from '@/components/dashboard/WatchlistSnapshot'
 import AIBriefWidget     from '@/components/dashboard/AIBriefWidget'
+import MorningBriefing   from '@/components/dashboard/MorningBriefing'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -22,6 +23,9 @@ export default async function DashboardPage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
       {/* Top greeting bar */}
       <TopBar userName={userName} />
+
+      {/* Morning briefing — market mood, watchlist alerts, stock of day */}
+      <MorningBriefing />
 
       {/* Market indices row */}
       <MarketIndices />

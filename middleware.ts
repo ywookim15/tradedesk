@@ -5,6 +5,7 @@ const PROTECTED_ROUTES = [
   "/dashboard",
   "/assistant",
   "/stock-analysis",
+  "/scanner",
   "/technical",
   "/fundamental",
   "/watchlist",

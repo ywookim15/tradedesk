@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react'
 import {
   TrendingUp, LayoutDashboard, Mic, BarChart2,
   Eye, Briefcase, BookOpen, Settings, LogOut,
-  ChevronLeft, ChevronRight, Sun, Moon,
+  ChevronLeft, ChevronRight, Sun, Moon, Radar,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
@@ -24,6 +24,7 @@ const NAV = [
   { href: '/dashboard',      icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/assistant',      icon: Mic,             label: 'AI Assistant' },
   { href: '/stock-analysis', icon: BarChart2,       label: 'Stock Analysis' },
+  { href: '/scanner',        icon: Radar,           label: 'Scanner' },
   { href: '/watchlist',      icon: Eye,             label: 'Watchlist' },
   { href: '/portfolio',      icon: Briefcase,       label: 'Portfolio' },
   { href: '/journal',        icon: BookOpen,        label: 'Trade Journal' },
@@ -33,8 +34,8 @@ const MOBILE_NAV = [
   { href: '/dashboard',      icon: LayoutDashboard, label: 'Dash' },
   { href: '/assistant',      icon: Mic,             label: 'AI' },
   { href: '/stock-analysis', icon: BarChart2,       label: 'Analysis' },
+  { href: '/scanner',        icon: Radar,           label: 'Scanner' },
   { href: '/watchlist',      icon: Eye,             label: 'Watch' },
-  { href: '/portfolio',      icon: Briefcase,       label: 'Portfolio' },
 ]
 
 export default function Sidebar({ user }: { user: SidebarUser }) {
