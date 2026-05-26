@@ -132,9 +132,3 @@ This project is built entirely on free tiers:
 - **Web Speech API** — Browser-native, no cost
 
 If you exceed free tier limits on any service, consult that provider's paid plans.
-
----
-
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you'd like to change.
