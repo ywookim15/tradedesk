@@ -753,15 +753,12 @@ type OHLCV = {
 
 const CHART_TF: { value: ChartPeriod; label: string }[] = [
   { value: '1min',   label: '1 Minute'  },
-  { value: '3min',   label: '3 Minutes' },
   { value: '5min',   label: '5 Minutes' },
   { value: '15min',  label: '15 Minutes'},
-  { value: '30min',  label: '30 Minutes'},
   { value: '1h',     label: '1 Hour'    },
   { value: '1day',   label: '1 Day'     },
   { value: '1week',  label: '1 Week'    },
   { value: '1month', label: '1 Month'   },
-  { value: 'all',    label: 'All Time'  },
 ]
 
 const CHART_TYPES: { value: ChartType; label: string }[] = [
@@ -895,16 +892,25 @@ export default function StockAnalysisClient() {
     }
   }, [])
 
-  // Init lightweight-charts instance once
+  // Init lightweight-charts once the chart container is in the DOM.
+  // The container only mounts when `fundamentals` becomes non-null, so we use
+  // fundamentals as the trigger. The guard prevents re-init on subsequent searches.
   useEffect(() => {
     if (!chartContainerRef.current) return
-    const chart = createChart(chartContainerRef.current, {
+    // Tear down any previous chart instance (happens on new ticker search)
+    if (chartInstanceRef.current) {
+      chartInstanceRef.current.remove()
+      chartInstanceRef.current = null
+      chartSeriesRef.current   = null
+    }
+    const node  = chartContainerRef.current
+    const chart = createChart(node, {
       layout:          { background: { color: '#0A0F1E' }, textColor: '#8A99B3' },
       grid:            { vertLines: { color: '#1E2D4A' }, horzLines: { color: '#1E2D4A' } },
       crosshair:       { mode: CrosshairMode.Magnet },
       rightPriceScale: { borderColor: '#1E2D4A' },
       timeScale:       { borderColor: '#1E2D4A', timeVisible: true },
-      width:           chartContainerRef.current.clientWidth,
+      width:           node.clientWidth,
       height:          320,
     })
     chartInstanceRef.current = chart
@@ -916,9 +922,10 @@ export default function StockAnalysisClient() {
     const ro = new ResizeObserver(() => {
       if (chartContainerRef.current) chart.resize(chartContainerRef.current.clientWidth, 320)
     })
-    ro.observe(chartContainerRef.current)
+    ro.observe(node)
     return () => { ro.disconnect(); chart.remove(); chartInstanceRef.current = null; chartSeriesRef.current = null }
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fundamentals])  // fires when container first appears in DOM (gated by fundamentals)
 
   // Re-render chart when data or type changes
   useEffect(() => {
