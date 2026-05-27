@@ -73,24 +73,59 @@ export async function GET(req: NextRequest) {
         q.close != null && q.close > 0,
     )
 
-    const data = quotes.map((q) => {
+    let data = quotes.map((q) => {
       const o = q.open, c = q.close
-      // Clamp high/low so they're always consistent with open/close.
-      // Yahoo Finance occasionally returns candles where high < open or low > close
-      // due to split/dividend adjustments or late-arriving data.
-      const h = Math.max(q.high, o, c)
-      const l = Math.min(q.low,  o, c)
       return {
         time: intraday
           ? Math.floor(q.date.getTime() / 1000)
           : q.date.toISOString().split('T')[0],
         open:   o,
-        high:   h,
-        low:    l,
+        high:   Math.max(q.high, o, c),  // high ≥ body top
+        low:    Math.min(q.low,  o, c),  // low  ≤ body bottom
         close:  c,
         volume: q.volume ?? 0,
       }
     })
+
+    // ── Fix 1 (intraday): strip extended-hours bars ───────────────────────────
+    // Yahoo Finance includes pre-market and after-hours bars in intraday data.
+    // These bars routinely carry stale high/low values from other sessions
+    // (e.g. the same `low: 297.46` appears across every after-hours bar even
+    // though the stock never traded there during that bar).
+    // Keep only NYSE/NASDAQ regular session: 9:30 AM – 4:00 PM Eastern.
+    if (intraday) {
+      data = data.filter((d) => {
+        const ts   = d.time as number
+        const date = new Date(ts * 1000)
+        // Approximate DST: EDT (UTC−4) April–October, EST (UTC−5) otherwise
+        const mo     = date.getUTCMonth()          // 0 = Jan
+        const offset = mo >= 3 && mo <= 9 ? -4 : -5
+        const localMin =
+          ((date.getUTCHours() + 24 + offset) % 24) * 60 +
+          date.getUTCMinutes()
+        // 9:30 AM = 570 min, 4:00 PM = 960 min
+        return localMin >= 570 && localMin < 960
+      })
+    }
+
+    // ── Fix 2 (all timeframes): rolling-median wick clamp ────────────────────
+    // Catches split-price inconsistencies (e.g. unadjusted high/low against
+    // adjusted open/close) and any other outlier values that survive Fix 1.
+    // Uses a ±10-bar rolling median so the cap adapts to trending prices.
+    if (data.length >= 3) {
+      const closes = data.map((d) => d.close)
+      data = data.map((d, i) => {
+        const start = Math.max(0, i - 10)
+        const end   = Math.min(closes.length, i + 11)
+        const s     = closes.slice(start, end).sort((a, b) => a - b)
+        const med   = s[Math.floor(s.length / 2)] || d.close || 1
+        return {
+          ...d,
+          high: Math.min(d.high, med * 2.0),   // high ≤ 2× local median
+          low:  Math.max(d.low,  med * 0.5),   // low  ≥ 50% of local median
+        }
+      })
+    }
 
     return NextResponse.json({ symbol, period, intraday, data })
   } catch (err) {
