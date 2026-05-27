@@ -61,20 +61,36 @@ export async function GET(req: NextRequest) {
     })
 
     type Quote = { date: Date; open: number; high: number; low: number; close: number; volume: number | null }
+
+    // Require all four OHLC fields to be present and positive — null/zero values
+    // cause wicks that spike to zero on the chart.
     const quotes = (result.quotes ?? []).filter(
-      (q): q is Quote => q != null && q.close != null && q.open != null,
+      (q): q is Quote =>
+        q != null &&
+        q.open  != null && q.open  > 0 &&
+        q.high  != null && q.high  > 0 &&
+        q.low   != null && q.low   > 0 &&
+        q.close != null && q.close > 0,
     )
 
-    const data = quotes.map((q) => ({
-      time: intraday
-        ? Math.floor(q.date.getTime() / 1000)
-        : q.date.toISOString().split('T')[0],
-      open:   q.open   ?? 0,
-      high:   q.high   ?? 0,
-      low:    q.low    ?? 0,
-      close:  q.close  ?? 0,
-      volume: q.volume ?? 0,
-    }))
+    const data = quotes.map((q) => {
+      const o = q.open, c = q.close
+      // Clamp high/low so they're always consistent with open/close.
+      // Yahoo Finance occasionally returns candles where high < open or low > close
+      // due to split/dividend adjustments or late-arriving data.
+      const h = Math.max(q.high, o, c)
+      const l = Math.min(q.low,  o, c)
+      return {
+        time: intraday
+          ? Math.floor(q.date.getTime() / 1000)
+          : q.date.toISOString().split('T')[0],
+        open:   o,
+        high:   h,
+        low:    l,
+        close:  c,
+        volume: q.volume ?? 0,
+      }
+    })
 
     return NextResponse.json({ symbol, period, intraday, data })
   } catch (err) {
