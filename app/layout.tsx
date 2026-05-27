@@ -20,13 +20,30 @@ export const metadata: Metadata = {
     "An AI-powered stock trading command center with voice assistant, technical analysis, fundamental analysis, and portfolio tracking.",
 };
 
+/**
+ * Inline script that reads the theme preference from localStorage BEFORE the
+ * first paint — this prevents any light/dark flash on page load.
+ */
+const themeScript = `
+(function() {
+  try {
+    var t = localStorage.getItem('td-theme');
+    if (t === 'light') document.documentElement.classList.add('light');
+  } catch(e) {}
+})();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${syne.variable} ${dmMono.variable} h-full`}>
+    <html lang="en" className={`${syne.variable} ${dmMono.variable} h-full`} suppressHydrationWarning>
+      {/* Theme init script — must run before body paint */}
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="min-h-full antialiased">{children}</body>
     </html>
   );

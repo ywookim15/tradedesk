@@ -93,3 +93,118 @@ html.light {
 .card-glow {
   box-shadow: inset 0 0 0 1px rgba(47,128,237,0.15);
 }
+
+/* ── Skeleton shimmer ─────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #0F1729 0%, #1a2540 40%, #0F1729 80%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+html.light .skeleton {
+  background: linear-gradient(
+    90deg,
+    #e8eef7 0%, #d0dae9 40%, #e8eef7 80%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ── CSS custom properties (light/dark) ───────────────────────────────────── */
+:root {
+  --td-bg:        #0A0F1E;
+  --td-surface:   #0F1729;
+  --td-border:    #1E2D4A;
+  --td-text:      #F0F4FF;
+  --td-muted:     #8A99B3;
+  --td-blue:      #2F80ED;
+  --td-blue-glow: #4FA3FF;
+  --td-green:     #00C896;
+  --td-red:       #FF4D4D;
+}
+
+html.light {
+  --td-bg:        #F4F7FC;
+  --td-surface:   #FFFFFF;
+  --td-border:    #D4DCEC;
+  --td-text:      #0A1628;
+  --td-muted:     #556180;
+  --td-blue:      #2F80ED;
+  --td-blue-glow: #1A6BD4;
+  --td-green:     #00A07A;
+  --td-red:       #D93636;
+}
+
+/* Light mode global overrides */
+html.light body {
+  background-color: var(--td-bg);
+  color: var(--td-text);
+}
+
+html.light body::before {
+  opacity: 0.01;
+}
+
+html.light ::-webkit-scrollbar-track { background: #eef2f9; }
+html.light ::-webkit-scrollbar-thumb { background: #c2cfe0; }
+html.light ::-webkit-scrollbar-thumb:hover { background: #2F80ED; }
+
+/* ── Light mode card / surface overrides ──────────────────────────────────── */
+/* Surfaces that use hardcoded #0F1729 */
+html.light [class*="bg-[#0F1729]"] {
+  background-color: #ffffff !important;
+}
+/* Main backgrounds that use #0A0F1E */
+html.light [class*="bg-[#0A0F1E]"] {
+  background-color: var(--td-bg) !important;
+}
+/* Borders */
+html.light [class*="border-[#1E2D4A]"] {
+  border-color: var(--td-border) !important;
+}
+/* Muted text */
+html.light [class*="text-[#8A99B3]"] {
+  color: var(--td-muted) !important;
+}
+/* Primary text */
+html.light [class*="text-[#F0F4FF]"] {
+  color: var(--td-text) !important;
+}
+/* Input backgrounds */
+html.light input[class*="bg-[#0F1729]"],
+html.light input[class*="bg-[#0A0F1E]"] {
+  background-color: #f4f7fc !important;
+  color: var(--td-text) !important;
+}
+/* Select backgrounds */
+html.light select[class*="bg-[#0A0F1E]"],
+html.light select[class*="bg-[#0F1729]"] {
+  background-color: #f4f7fc !important;
+  color: var(--td-text) !important;
+}
+/* Card glow — lighter in light mode */
+html.light .card-glow {
+  box-shadow: inset 0 0 0 1px rgba(47,128,237,0.12);
+}
+/* Sidebar / nav hover states */
+html.light [class*="hover:bg-[#1E2D4A]"]:hover {
+  background-color: #e8eef7 !important;
+}
+
+/* ── Chart modal fade-scale animation ─────────────────────────────────────── */
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);   }
+}
+.modal-in {
+  animation: modalIn 0.22s cubic-bezier(0.16,1,0.3,1) both;
+}

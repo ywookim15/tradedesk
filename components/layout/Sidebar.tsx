@@ -81,10 +81,13 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
       {/* ── Desktop sidebar ─────────────────────────────────────────── */}
       <aside
         className={cn(
-          'hidden md:flex flex-col h-screen shrink-0 border-r border-[#1E2D4A]',
-          'bg-[#0A0F1E]/80 backdrop-blur-sm transition-all duration-300 ease-in-out',
+          'hidden md:flex flex-col h-screen shrink-0 border-r backdrop-blur-sm transition-all duration-300 ease-in-out',
           collapsed ? 'w-16' : 'w-60',
         )}
+        style={{
+          borderColor: 'var(--td-border, #1E2D4A)',
+          backgroundColor: 'color-mix(in srgb, var(--td-bg, #0A0F1E) 80%, transparent)',
+        }}
       >
         {/* Logo row */}
         <div

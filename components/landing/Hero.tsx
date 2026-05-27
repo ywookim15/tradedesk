@@ -70,7 +70,7 @@ export default function Hero() {
             {[
               { value: '20+', label: 'Analysis Tools' },
               { value: 'Free', label: 'To Start' },
-              { value: '"Hey buddy"', label: 'Wake Word' },
+              { value: 'Voice AI', label: 'Hands-Free' },
             ].map((stat) => (
               <div key={stat.label}>
                 <div

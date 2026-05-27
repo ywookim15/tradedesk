@@ -21,9 +21,9 @@ const steps: Step[] = [
   {
     number: '02',
     icon: Mic,
-    title: 'Say "Hey buddy" to activate',
+    title: 'Tap the mic or enable Always Listening',
     description:
-      'TradeDesk listens for your wake word. The moment it hears "Hey buddy," the AI activates and starts processing your spoken question — completely hands-free.',
+      'Click the mic button or toggle Always Listening to activate the AI hands-free. Speak your question naturally and TradeDesk processes it instantly.',
     highlight: true,
   },
   {

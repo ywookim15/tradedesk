@@ -190,7 +190,7 @@ export default function DashboardMockup() {
           ))}
         </div>
         <span className="text-[10px] text-[#8A99B3] whitespace-nowrap">
-          Hey buddy, listening...
+          TradeDesk AI, listening...
         </span>
       </div>
     </div>

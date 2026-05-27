@@ -15,7 +15,10 @@ export default async function ProtectedLayout({ children }: { children: React.Re
     .single()
 
   return (
-    <div className="flex h-screen bg-[#0A0F1E] overflow-hidden">
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{ backgroundColor: 'var(--td-bg, #0A0F1E)' }}
+    >
       <Sidebar
         user={{
           email:   user.email,
@@ -23,7 +26,10 @@ export default async function ProtectedLayout({ children }: { children: React.Re
         }}
       />
       {/* pb-16 on mobile reserves space for the bottom tab bar */}
-      <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+      <main
+        className="flex-1 overflow-y-auto pb-16 md:pb-0"
+        style={{ backgroundColor: 'var(--td-bg, #0A0F1E)', color: 'var(--td-text, #F0F4FF)' }}
+      >
         {children}
       </main>
     </div>

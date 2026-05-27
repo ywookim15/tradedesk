@@ -6,8 +6,10 @@ const yf = new YahooFinance()
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-// 30 well-known S&P 500 stocks available for default scanning
-const SP500_DEFAULTS = [
+// ── Scan universes ─────────────────────────────────────────────────────────────
+
+/** Top 30 S&P 500 by market cap */
+const SP500_TOP30 = [
   'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'TSLA', 'NFLX',
   'JPM', 'V', 'MA', 'BAC', 'GS',
   'JNJ', 'UNH', 'PFE', 'MRK',
@@ -16,6 +18,62 @@ const SP500_DEFAULTS = [
   'WMT', 'COST', 'HD',
   'DIS', 'T', 'CMCSA',
 ]
+
+/** Full S&P 500 constituent list (503 tickers as of 2025) */
+const SP500_ALL = [
+  'MMM','AOS','ABT','ABBV','ACN','ADBE','AMD','AES','AFL','A',
+  'APD','ABNB','AKAM','ALB','ARE','ALGN','ALLE','LNT','ALL','GOOGL',
+  'GOOG','MO','AMZN','AMCR','AEE','AEP','AXP','AIG','AMT','AWK',
+  'AMP','AME','AMGN','APH','ADI','ANSS','AON','APA','AAPL','AMAT',
+  'APTV','ACGL','ADM','ANET','AJG','AIZ','T','ATO','ADSK','ADP',
+  'AZO','AVB','AVY','AXON','BKR','BALL','BAC','BK','BBWI','BAX',
+  'BDX','WRB','BBY','TECH','BIIB','BLK','BX','BK','BA','BKNG',
+  'BWA','BSX','BMY','AVGO','BR','BRO','BF.B','BLDR','BG','CDNS',
+  'CZR','CPT','CPB','COF','CAH','KMX','CCL','CARR','CAT','CBOE',
+  'CBRE','CDW','CE','COR','CNC','CNP','CF','CHRW','CRL','SCHW',
+  'CHTR','CVX','CMG','CB','CHD','CI','CINF','CTAS','CSCO','C',
+  'CFG','CLX','CME','CMS','KO','CTSH','CL','CMCSA','CMA','CAG',
+  'COP','ED','STZ','CEG','COO','CPRT','GLW','CTVA','CSGP','COST',
+  'CTRA','CCI','CSX','CMI','CVS','DHI','DHR','DRI','DVA','DE',
+  'DAL','XRAY','DVN','DXCM','FANG','DLR','DFS','DG','DLTR','D',
+  'DPZ','DOV','DOW','DTE','DUK','DD','EMN','ETN','EBAY','ECL',
+  'EIX','EW','EA','ELV','LLY','EMR','ENPH','ETR','EOG','EPAM',
+  'EQT','EFX','EQIX','EQR','ESS','EL','ETSY','EG','EVRG','ES',
+  'EXC','EXPD','EXPE','EXR','XOM','FFIV','FDS','FICO','FAST','FRT',
+  'FDX','FITB','FSLR','FE','FIS','FI','FLT','FMC','F','FTNT',
+  'FTV','FOXA','FOX','BEN','FCX','GRMN','IT','GEHC','GEN','GNRC',
+  'GD','GE','GIS','GM','GPC','GILD','GPN','GL','GS','HAL',
+  'HIG','HAS','HCA','DOC','HSIC','HSY','HES','HPE','HLT','HOLX',
+  'HD','HON','HRL','HST','HWM','HPQ','HUBB','HUM','HBAN','HII',
+  'IBM','IEX','IDXX','ITW','ILMN','INCY','IR','PODD','INTC','ICE',
+  'IFF','IP','IPG','INTU','ISRG','IVZ','INVH','IQV','IRM','JBHT',
+  'JBL','JKHY','J','JNJ','JCI','JPM','JNPR','K','KVUE','KDP',
+  'KEY','KEYS','KMB','KIM','KMI','KLAC','KHC','KR','LHX','LH',
+  'LRCX','LW','LVS','LDOS','LEN','LIN','LYV','LKQ','LMT','L',
+  'LOW','LULU','LYB','MTB','MRO','MPC','MKTX','MAR','MMC','MLM',
+  'MAS','MA','MTCH','MKC','MCD','MCK','MDT','MRK','META','MET',
+  'MTD','MGM','MCHP','MU','MSFT','MAA','MRNA','MHK','MOH','TAP',
+  'MDLZ','MPWR','MNST','MCO','MS','MOS','MSI','MSCI','NDAQ','NTAP',
+  'NFLX','NWL','NEM','NWSA','NWS','NEE','NKE','NI','NDSN','NSC',
+  'NTRS','NOC','NCLH','NRG','NUE','NVDA','NVR','NXPI','ORLY','OXY',
+  'ODFL','OMC','ON','OKE','ORCL','PCAR','PKG','PANW','PARA','PH',
+  'PAYX','PAYC','PYPL','PNR','PEP','PFE','PCG','PM','PSX','PNW',
+  'PXD','PNC','POOL','PPG','PPL','PFG','PG','PGR','PRU','PLD',
+  'QCOM','PWR','QRVO','RJF','RTX','O','REG','REGN','RF','RSG',
+  'RMD','RVTY','ROK','ROL','ROP','ROST','RCL','SPGI','CRM','SBAC',
+  'SLB','STX','SRE','NOW','SHW','SBUX','STT','SMCI','STE','SYK',
+  'SOLV','SWK','SWKS','SJM','SNA','SEDG','SO','LUV','SWN','SPG',
+  'SNPS','SYY','TMUS','TROW','TTWO','TPR','TRGP','TGT','TEL','TDY',
+  'TFX','TER','TSLA','TXN','TXT','TMO','TJX','TSCO','TT','TDG',
+  'TRV','TRMB','TFC','TYL','TSN','USB','UDR','ULTA','UNP','UAL',
+  'UPS','URI','UNH','UHS','VLO','VTR','VRSN','VRSK','VZ','VRTX',
+  'VLTO','VFC','VTRS','VICI','V','VST','VNO','VMC','WRK','WAB',
+  'WMT','WBD','WM','WAT','WEC','WFC','WELL','WST','WDC','WRK',
+  'WY','WHR','WMB','WTW','GWW','WYNN','XEL','XYL','YUM','ZBRA',
+  'ZBH','ZTS',
+]
+
+export type ScanUniverse = 'watchlist' | 'sp500_30' | 'sp500_all' | 'gainers'
 
 // ── Math utilities ─────────────────────────────────────────────────────────────
 
@@ -127,7 +185,7 @@ async function chunk<T>(
   return out
 }
 
-// ── Fetch chart data for a single ticker ───────────────────────────────────────
+// ── Fetch chart data ───────────────────────────────────────────────────────────
 
 async function fetchChart(ticker: string, days: number): Promise<number[]> {
   const to = new Date()
@@ -141,7 +199,30 @@ async function fetchChart(ticker: string, days: number): Promise<number[]> {
     .map((q) => q.close as number)
 }
 
-// ── Apply filters to a ticker's data ──────────────────────────────────────────
+// ── Fetch top gainers ──────────────────────────────────────────────────────────
+
+async function fetchTopGainers(): Promise<string[]> {
+  try {
+    // Use Yahoo Finance screener for day gainers
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (yf as any).screener('day_gainers', { count: 100 })
+    const quotes = result?.quotes ?? []
+    return quotes
+      .filter((q: { symbol?: string }) => q.symbol)
+      .map((q: { symbol: string }) => q.symbol)
+      .slice(0, 100)
+  } catch {
+    // Fallback: return a broad active-stock list
+    return [
+      'TSLA','NVDA','AMD','AAPL','AMZN','META','GOOGL','MSFT',
+      'NFLX','PLTR','SOFI','RIVN','LCID','NIO','COIN','HOOD',
+      'MARA','RIOT','CLSK','BITO','GME','AMC','BBBY','BB',
+      'SPY','QQQ','ARKK','SQQQ','TQQQ','SPXU',
+    ]
+  }
+}
+
+// ── Apply filters ──────────────────────────────────────────────────────────────
 
 function applyFilters(
   filters: FilterCriterion[],
@@ -159,7 +240,6 @@ function applyFilters(
   for (const f of filters) {
     let passes = false
     let label = ''
-
     const { price, week52High, week52Low, todayVolume, avgVolume, pe, eps } = quoteData
     const { rsi, sma50Dev, sma200Dev, closes } = techData
 
@@ -239,9 +319,9 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { filters, includeDefaults } = await req.json() as {
+    const { filters, universe = 'watchlist' } = await req.json() as {
       filters: FilterCriterion[]
-      includeDefaults: boolean
+      universe: ScanUniverse
     }
 
     if (!filters?.length) {
@@ -254,12 +334,36 @@ export async function POST(req: NextRequest) {
     const watchlistTickers = (watchlistRows ?? []).map((r: { ticker: string }) => r.ticker)
 
     // ── 2. Build ticker universe ───────────────────────────────────────────
-    const tickerSet = new Set<string>(watchlistTickers)
-    if (includeDefaults) SP500_DEFAULTS.forEach(t => tickerSet.add(t))
-    const tickers = [...tickerSet].slice(0, 50) // cap at 50 total
+    let tickerPool: string[] = []
+
+    switch (universe) {
+      case 'watchlist':
+        tickerPool = watchlistTickers
+        break
+      case 'sp500_30':
+        tickerPool = [...new Set([...watchlistTickers, ...SP500_TOP30])]
+        break
+      case 'sp500_all':
+        tickerPool = [...new Set([...watchlistTickers, ...SP500_ALL])]
+        break
+      case 'gainers': {
+        const gainers = await fetchTopGainers()
+        tickerPool = [...new Set([...watchlistTickers, ...gainers])]
+        break
+      }
+    }
+
+    // Cap at 60 to avoid timeout — sp500_all will still scan a broad list
+    const tickers = tickerPool.slice(0, 60)
 
     if (!tickers.length) {
-      return NextResponse.json({ results: [], tickerCount: 0, watchlistCount: 0 })
+      return NextResponse.json({
+        results: [],
+        tickerCount: 0,
+        watchlistCount: watchlistTickers.length,
+        universe,
+        emptyWatchlist: universe === 'watchlist' && watchlistTickers.length === 0,
+      })
     }
 
     // ── 3. Bulk fetch quotes ───────────────────────────────────────────────
@@ -287,7 +391,6 @@ export async function POST(req: NextRequest) {
 
     const chartMap: Record<string, number[]> = {}
     if (needsChart) {
-      // Fetch charts concurrently (5 at a time to avoid rate limits)
       const chartResults = await chunk(tickers, 5, async (ticker) => {
         const closes = await fetchChart(ticker, chartDays)
         return { ticker, closes }
@@ -297,7 +400,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── 5. Apply filters to each ticker ────────────────────────────────────
+    // ── 5. Apply filters ───────────────────────────────────────────────────
     const results: ScanResult[] = []
 
     for (const ticker of tickers) {
@@ -310,28 +413,27 @@ export async function POST(req: NextRequest) {
       const closes = chartMap[ticker] ?? []
       const n = closes.length
 
-      // Compute technical indicators from chart data
       const rsi = n > 14 ? calcRSI(closes) : null
       let sma50Dev: number | null = null
       let sma200Dev: number | null = null
 
       if (n >= 50) {
-        const arr = smaArr(closes, 50)
+        const arr  = smaArr(closes, 50)
         const last = arr[n - 1]
         if (!isNaN(last)) sma50Dev = ((price - last) / last) * 100
       }
       if (n >= 200) {
-        const arr = smaArr(closes, 200)
+        const arr  = smaArr(closes, 200)
         const last = arr[n - 1]
         if (!isNaN(last)) sma200Dev = ((price - last) / last) * 100
       }
 
       const todayVolume = q.regularMarketVolume ?? 0
-      const avgVolume = q.averageDailyVolume3Month ?? 0
-      const pe = q.trailingPE ?? null
-      const eps = q.epsTrailingTwelveMonths ?? null
-      const week52High = q.fiftyTwoWeekHigh ?? null
-      const week52Low = q.fiftyTwoWeekLow ?? null
+      const avgVolume   = q.averageDailyVolume3Month ?? 0
+      const pe          = q.trailingPE ?? null
+      const eps         = q.epsTrailingTwelveMonths ?? null
+      const week52High  = q.fiftyTwoWeekHigh ?? null
+      const week52Low   = q.fiftyTwoWeekLow ?? null
 
       const { matched, allPass } = applyFilters(
         filters,
@@ -358,13 +460,14 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Sort by absolute % change desc (biggest movers first)
     results.sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
 
     return NextResponse.json({
       results,
       tickerCount: tickers.length,
       watchlistCount: watchlistTickers.length,
+      universe,
+      emptyWatchlist: false,
     })
   } catch (err) {
     console.error('[/api/scanner]', err)

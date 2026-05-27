@@ -30,9 +30,9 @@ export default function AIBriefWidget() {
             AI Daily Brief
           </h3>
           <p className="text-xs text-[#8A99B3] leading-relaxed max-w-sm">
-            Ask your AI assistant for today&apos;s market brief. Say{' '}
-            <span className="text-[#F0F4FF]">&ldquo;Hey buddy, what&apos;s moving today?&rdquo;</span>{' '}
-            or type your question.
+            Ask your AI assistant for today&apos;s market brief. Tap the mic and say{' '}
+            <span className="text-[#F0F4FF]">&ldquo;What&apos;s moving today?&rdquo;</span>{' '}
+            or type your question directly.
           </p>
         </div>
       </div>

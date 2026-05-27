@@ -14,7 +14,7 @@ const features: Feature[] = [
     color: '#2F80ED',
     title: 'Voice AI Assistant',
     description:
-      'Say "Hey buddy" to activate hands-free analysis. Ask any trading question and get an educational spoken response while your charts stay front and center.',
+      'Activate hands-free analysis with a tap or always-on listening. Ask any trading question and get an educational spoken response while your charts stay front and center.',
   },
   {
     icon: LineChart,
