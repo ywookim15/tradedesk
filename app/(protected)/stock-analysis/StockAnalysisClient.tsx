@@ -1,8 +1,15 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Search, Info, Bot, ExternalLink, TrendingUp, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  createChart,
+  CandlestickSeries,
+  BarSeries,
+  CrosshairMode,
+  type Time,
+} from 'lightweight-charts'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -731,6 +738,51 @@ function RegimeCard({ regime, metric }: {
   )
 }
 
+// ── Chart types & constants ───────────────────────────────────────────────────
+
+type ChartPeriod =
+  | '1min' | '3min' | '5min' | '15min' | '30min' | '1h'
+  | '1day' | '1week' | '1month' | 'all'
+
+type ChartType = 'candlestick' | 'bar' | 'heikin_ashi'
+
+type OHLCV = {
+  time: string | number
+  open: number; high: number; low: number; close: number; volume: number
+}
+
+const CHART_TF: { value: ChartPeriod; label: string }[] = [
+  { value: '1min',   label: '1 Minute'  },
+  { value: '3min',   label: '3 Minutes' },
+  { value: '5min',   label: '5 Minutes' },
+  { value: '15min',  label: '15 Minutes'},
+  { value: '30min',  label: '30 Minutes'},
+  { value: '1h',     label: '1 Hour'    },
+  { value: '1day',   label: '1 Day'     },
+  { value: '1week',  label: '1 Week'    },
+  { value: '1month', label: '1 Month'   },
+  { value: 'all',    label: 'All Time'  },
+]
+
+const CHART_TYPES: { value: ChartType; label: string }[] = [
+  { value: 'candlestick', label: 'Candles'     },
+  { value: 'bar',         label: 'OHLC Bar'    },
+  { value: 'heikin_ashi', label: 'Heikin Ashi' },
+]
+
+function toHeikinAshi(candles: OHLCV[]): OHLCV[] {
+  const out: OHLCV[] = []
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i]
+    const haClose = (c.open + c.high + c.low + c.close) / 4
+    const haOpen  = i === 0
+      ? (c.open + c.close) / 2
+      : (out[i - 1].open + out[i - 1].close) / 2
+    out.push({ ...c, open: haOpen, high: Math.max(c.high, haOpen, haClose), low: Math.min(c.low, haOpen, haClose), close: haClose })
+  }
+  return out
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function StockAnalysisClient() {
@@ -747,6 +799,19 @@ export default function StockAnalysisClient() {
   const [mcSims,       setMcSims]       = useState(1_000)
   const [mcData,       setMcData]       = useState<MonteCarloResult | null>(null)
   const [mcComputing,  setMcComputing]  = useState(false)
+
+  // ── Chart state ──────────────────────────────────────────────────────────────
+  const [chartPeriod,   setChartPeriod]   = useState<ChartPeriod>('1day')
+  const [chartType,     setChartType]     = useState<ChartType>('candlestick')
+  const [tfOpen,        setTfOpen]        = useState(false)
+  const [chartLoading,  setChartLoading]  = useState(false)
+  const [chartData,     setChartData]     = useState<OHLCV[]>([])
+
+  const chartContainerRef = useRef<HTMLDivElement>(null)
+  const chartInstanceRef  = useRef<ReturnType<typeof createChart> | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chartSeriesRef    = useRef<any>(null)
+  const chartTypeRef      = useRef<ChartType>('candlestick')
 
   const searchParams = useSearchParams()
 
@@ -794,6 +859,91 @@ export default function StockAnalysisClient() {
     if (!sym) return
     loadStock(sym)
   }, [searchInput, loadStock])
+
+  // ── Chart helpers ────────────────────────────────────────────────────────────
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function rebuildSeries(chart: ReturnType<typeof createChart>, ct: ChartType, data: OHLCV[]): any {
+    const prev = chartSeriesRef.current
+    if (prev) { try { chart.removeSeries(prev) } catch { /* ok */ } }
+    let series
+    if (ct === 'bar') {
+      series = chart.addSeries(BarSeries, { upColor: '#00C896', downColor: '#FF4D4D' })
+    } else {
+      series = chart.addSeries(CandlestickSeries, {
+        upColor: '#00C896', downColor: '#FF4D4D',
+        borderUpColor: '#00C896', borderDownColor: '#FF4D4D',
+        wickUpColor: '#00C896', wickDownColor: '#FF4D4D',
+      })
+    }
+    const display = ct === 'heikin_ashi' ? toHeikinAshi(data) : data
+    series.setData(display.map(d => ({ ...d, time: d.time as Time })))
+    chartSeriesRef.current = series
+    chart.timeScale().fitContent()
+    return series
+  }
+
+  const fetchChartData = useCallback(async (sym: string, p: ChartPeriod) => {
+    setChartLoading(true)
+    try {
+      const res = await fetch(`/api/stock/chart?symbol=${encodeURIComponent(sym)}&period=${p}`)
+      if (!res.ok) throw new Error()
+      const json = await res.json() as { data: OHLCV[] }
+      setChartData(json.data ?? [])
+    } catch { /* silent — chart just stays empty */ } finally {
+      setChartLoading(false)
+    }
+  }, [])
+
+  // Init lightweight-charts instance once
+  useEffect(() => {
+    if (!chartContainerRef.current) return
+    const chart = createChart(chartContainerRef.current, {
+      layout:          { background: { color: '#0A0F1E' }, textColor: '#8A99B3' },
+      grid:            { vertLines: { color: '#1E2D4A' }, horzLines: { color: '#1E2D4A' } },
+      crosshair:       { mode: CrosshairMode.Magnet },
+      rightPriceScale: { borderColor: '#1E2D4A' },
+      timeScale:       { borderColor: '#1E2D4A', timeVisible: true },
+      width:           chartContainerRef.current.clientWidth,
+      height:          320,
+    })
+    chartInstanceRef.current = chart
+    chartSeriesRef.current = chart.addSeries(CandlestickSeries, {
+      upColor: '#00C896', downColor: '#FF4D4D',
+      borderUpColor: '#00C896', borderDownColor: '#FF4D4D',
+      wickUpColor: '#00C896', wickDownColor: '#FF4D4D',
+    })
+    const ro = new ResizeObserver(() => {
+      if (chartContainerRef.current) chart.resize(chartContainerRef.current.clientWidth, 320)
+    })
+    ro.observe(chartContainerRef.current)
+    return () => { ro.disconnect(); chart.remove(); chartInstanceRef.current = null; chartSeriesRef.current = null }
+  }, [])
+
+  // Re-render chart when data or type changes
+  useEffect(() => {
+    const chart = chartInstanceRef.current
+    if (!chart || !chartData.length) return
+    rebuildSeries(chart, chartType, chartData)
+    chartTypeRef.current = chartType
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartData, chartType])
+
+  // Fetch chart data when ticker or period changes
+  useEffect(() => {
+    if (ticker) fetchChartData(ticker, chartPeriod)
+  }, [ticker, chartPeriod, fetchChartData])
+
+  const handleChartPeriod = useCallback((p: ChartPeriod) => {
+    setChartPeriod(p); setTfOpen(false)
+    if (ticker) fetchChartData(ticker, p)
+  }, [ticker, fetchChartData])
+
+  const handleChartType = useCallback((ct: ChartType) => {
+    setChartType(ct); chartTypeRef.current = ct
+    const chart = chartInstanceRef.current
+    if (chart && chartData.length) rebuildSeries(chart, ct, chartData)
+  }, [chartData])
 
   const runAI = useCallback(async () => {
     if (!fundamentals || !ticker) return
@@ -922,6 +1072,66 @@ export default function StockAnalysisClient() {
                 {fundamentals.description}{fundamentals.description.length >= 400 && '…'}
               </p>
             )}
+          </div>
+
+          {/* ── Chart section ────────────────────────────────────────────── */}
+          <div className="bg-[#0F1729] border border-[#1E2D4A] rounded-[6px] overflow-hidden mb-5">
+            {/* Chart controls */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[#1E2D4A] flex-wrap">
+              <span className="text-[10px] text-[#8A99B3] uppercase tracking-widest font-medium mr-auto">
+                Price Chart
+              </span>
+
+              {/* Timeframe dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setTfOpen(v => !v)}
+                  className="flex items-center gap-2 text-xs bg-[#0A0F1E] border border-[#1E2D4A] hover:border-[#2F80ED] text-[#F0F4FF] px-3 py-1.5 rounded-[4px] transition-colors min-w-[120px] justify-between"
+                >
+                  <span>{CHART_TF.find(t => t.value === chartPeriod)?.label ?? 'Timeframe'}</span>
+                  <ChevronDown size={11} className={`text-[#8A99B3] transition-transform ${tfOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {tfOpen && (
+                  <div className="absolute top-full mt-1 right-0 z-20 w-36 bg-[#0F1729] border border-[#1E2D4A] rounded-[4px] overflow-hidden shadow-xl">
+                    {CHART_TF.map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => handleChartPeriod(opt.value)}
+                        className="w-full text-left text-xs px-3 py-2 transition-colors hover:bg-[#1E2D4A]"
+                        style={{ color: chartPeriod === opt.value ? '#4FA3FF' : '#8A99B3' }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Chart type segmented control */}
+              <div className="flex items-center gap-0.5 bg-[#0A0F1E] border border-[#1E2D4A] rounded-[4px] p-0.5">
+                {CHART_TYPES.map(ct => (
+                  <button
+                    key={ct.value}
+                    onClick={() => handleChartType(ct.value)}
+                    className="text-[11px] px-3 py-1 rounded-[3px] font-medium transition-all"
+                    style={{
+                      backgroundColor: chartType === ct.value ? '#2F80ED' : 'transparent',
+                      color:           chartType === ct.value ? '#fff'    : '#8A99B3',
+                    }}
+                  >
+                    {ct.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Chart canvas */}
+            <div className="relative" style={{ minHeight: 320 }}>
+              {chartLoading && (
+                <div className="absolute inset-0 z-10 skeleton rounded-none" />
+              )}
+              <div ref={chartContainerRef} className="w-full" />
+            </div>
           </div>
 
           {/* Fundamental metrics grid */}
